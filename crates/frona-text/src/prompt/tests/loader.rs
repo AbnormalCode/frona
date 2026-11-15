@@ -105,3 +105,17 @@ fn listing_merges_sources_deduplicates_and_only_lists_immediate_files() {
         ["tools/a.md", "tools/b.md", "tools/c.md", "tools/d.md"]
     );
 }
+
+#[test]
+fn file_cache_serves_first_read_and_skips_missing_files() {
+    let dir = tempfile::tempdir().unwrap();
+    let loader = PromptLoader::new(dir.path()).with_file_cache();
+    assert_eq!(loader.read_raw("a.md"), None);
+    std::fs::write(dir.path().join("a.md"), "one").unwrap();
+    assert_eq!(loader.read_raw("a.md").as_deref(), Some("one"));
+    std::fs::write(dir.path().join("a.md"), "two").unwrap();
+    assert_eq!(loader.clone().read_raw("a.md").as_deref(), Some("one"));
+
+    let uncached = PromptLoader::new(dir.path());
+    assert_eq!(uncached.read_raw("a.md").as_deref(), Some("two"));
+}

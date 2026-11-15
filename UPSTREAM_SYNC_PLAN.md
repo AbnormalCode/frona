@@ -645,11 +645,14 @@ to Rust 1.99.1/Node 24.22; fork stays on 1.98.1 until CI can validate);
 (`prompt` module behind the `prompts` feature, `redaction` behind
 `redaction`, README/LICENSE, publish metadata): `b6dff1e5` (crate part),
 `559d2a2f`, `63904012`, `a0704eb3`, `0ce3ae28`. 144 tests pass with
-`--all-features`. **Not ported:** `b6dff1e5`'s server-side switch from
-`agent::prompt::PromptLoader`/`core::template` to `frona_text::prompt`. The
-fork's `PromptLoader` has a process-lifetime read cache (and a
-`denied_delegation_note` helper alongside it) that upstream's loader lacks, so
-adopting upstream's loader as-is would regress that. Next step: add the same
-cache to `frona_text::prompt::PromptLoader` (opt-in), then migrate the ~70
-server import sites mechanically. The new feature flags are not enabled by the
-server, so nothing changed at runtime.
+`--all-features`. **Server migration (2026-11-15):** `agent::prompt::PromptLoader` is now a
+re-export of `frona_text::prompt::PromptLoader`. The fork's read cache was
+added upstream-side as an opt-in `with_file_cache()` (new unit test) and is
+enabled where `AppState` builds the loader, so runtime behavior is unchanged;
+`From<PromptError> for AppError` added. `core::template` is left in place (still
+used by other callers; the loader no longer needs it). Verified:
+`cargo check -p frona-server --tests`, frona-text tests (145), server
+`agent::`/voice/task_control/skills/compactor lib tests. Remaining from L:
+nothing. Upstream has since added 10 more commits (through `05332fd0`:
+Sigma 4 memory graph, frontend dependency upgrades, tool-batch concurrency,
+streaming-stall fix, sandbox grant resolution) — fold into the next audit.

@@ -2,17 +2,21 @@ use super::{PromptError, render_template};
 use std::{
     collections::{BTreeSet, HashMap},
     path::PathBuf,
+    sync::{Arc, RwLock},
 };
 
 /// Named templates and default variables, with optional filesystem overrides.
-/// Files are read on every lookup, so changes are visible without rebuilding the
-/// loader. String overrides and embedded defaults are owned by this value.
+/// Files are read on every lookup by default, so changes are visible without
+/// rebuilding the loader; call [`PromptLoader::with_file_cache`] to read each
+/// file once instead. String overrides and embedded defaults are owned by this value.
 #[derive(Debug, Clone, Default)]
 pub struct PromptLoader {
     directory: Option<PathBuf>,
     embedded: HashMap<String, String>,
     overrides: HashMap<String, String>,
     defaults: HashMap<String, String>,
+    /// `Some` once file caching is enabled; shared across clones.
+    file_cache: Option<Arc<RwLock<HashMap<String, Arc<str>>>>>,
 }
 impl PromptLoader {
     /// Load from a directory, preserving the server's existing lookup behavior.
@@ -35,6 +39,14 @@ impl PromptLoader {
     }
     pub fn with_directory(mut self, directory: impl Into<PathBuf>) -> Self {
         self.directory = Some(directory.into());
+        self
+    }
+    /// Cache successfully read directory files for the lifetime of the loader
+    /// (shared across clones). Suited to prompts shipped with a deployment that
+    /// are read repeatedly from concurrent tasks; edits then need a restart.
+    /// Missing or unreadable files are never cached.
+    pub fn with_file_cache(mut self) -> Self {
+        self.file_cache = Some(Arc::default());
         self
     }
     pub fn with_override(mut self, name: impl Into<String>, template: impl Into<String>) -> Self {
@@ -96,8 +108,21 @@ impl PromptLoader {
             return Ok(Some(raw.clone()));
         }
         if let Some(directory) = &self.directory {
+            if let Some(cache) = &self.file_cache
+                && let Ok(cache) = cache.read()
+                && let Some(hit) = cache.get(name)
+            {
+                return Ok(Some(hit.to_string()));
+            }
             match std::fs::read_to_string(directory.join(name)) {
-                Ok(raw) => return Ok(Some(raw)),
+                Ok(raw) => {
+                    if let Some(cache) = &self.file_cache
+                        && let Ok(mut cache) = cache.write()
+                    {
+                        cache.insert(name.to_string(), raw.as_str().into());
+                    }
+                    return Ok(Some(raw));
+                }
                 Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
                 Err(source) => {
                     return Err(PromptError::Read {
