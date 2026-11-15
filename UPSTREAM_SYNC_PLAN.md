@@ -656,3 +656,13 @@ used by other callers; the loader no longer needs it). Verified:
 nothing. Upstream has since added 10 more commits (through `05332fd0`:
 Sigma 4 memory graph, frontend dependency upgrades, tool-batch concurrency,
 streaming-stall fix, sandbox grant resolution) — fold into the next audit.
+
+### Status update — 2026-11-15 (`47afabd2` ported)
+
+Ported the non-harness parts of `47afabd2`: sysinfo 0.40 (fallible
+`System::new()` in `/api/system/info` and the sandbox resource monitor),
+jsonschema 0.61 (server, model-catalog), similar 3 (browser), and a full
+`cargo update` (lock only; SurrealDB `=3.3.5` and the presage/wa-rs git pins
+held by their manifests). Harness/Bedrock manifest hunks skipped (no harness
+crate in the fork). Verified: `cargo check --workspace --tests`, `cargo fmt
+--check`; targeted lib tests were still running at commit time.
