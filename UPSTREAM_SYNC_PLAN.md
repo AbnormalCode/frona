@@ -665,4 +665,22 @@ jsonschema 0.61 (server, model-catalog), similar 3 (browser), and a full
 `cargo update` (lock only; SurrealDB `=3.3.5` and the presage/wa-rs git pins
 held by their manifests). Harness/Bedrock manifest hunks skipped (no harness
 crate in the fork). Verified: `cargo check --workspace --tests`, `cargo fmt
---check`; targeted lib tests were still running at commit time.
+--check`; targeted lib tests (sandbox, core::config, db::repo, api::: 217) pass.
+
+### Audit update — 2026-11-18 (upstream through `05332fd0`)
+
+Eleven upstream commits after `e9095623`. Ported (Group P, small fixes):
+`a4841cea` (dispatcher releases the session read guard before cleanup, fixing
+a streaming stall; test kept, harness-based neighbor test dropped),
+`2f3c822e` (unconditional Cedar connect forbid overrides permits; unit and
+e2e tests), `4d9dad5d` (memory graph on Sigma 4), `e88cb403` (frontend
+dependency upgrades incl. lexical 0.53 / assistant-ui 0.15.36 — this lifts the
+earlier lexical hold; lock taken from upstream and pruned of
+`sparql-formatter`, which the fork doesn't use; trigger-adapter serialization
+change ported with it). Verified: web tsc/eslint clean, vitest 1014 pass;
+`policy::sandbox` + `chat::broadcast` lib tests, `policy_sandbox_e2e` (19).
+
+Not ported: `f7774c1e`, `2fc32f41`, `576be457` (sandbox/harness extraction,
+bounded tool-batch concurrency — Group M territory; `f7774c1e` is another new
+crate-extraction, 60 files), `1e230ba9`, `c27d6fc7`, `05332fd0`, `2428d4e9`
+(release automation, container pins, crate docs — Group O).
