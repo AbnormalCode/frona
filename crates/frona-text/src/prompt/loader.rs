@@ -5,6 +5,8 @@ use std::{
     sync::{Arc, RwLock},
 };
 
+type FileCache = Arc<RwLock<HashMap<String, Arc<str>>>>;
+
 /// Named templates and default variables, with optional filesystem overrides.
 /// Files are read on every lookup by default, so changes are visible without
 /// rebuilding the loader; call [`PromptLoader::with_file_cache`] to read each
@@ -16,7 +18,7 @@ pub struct PromptLoader {
     overrides: HashMap<String, String>,
     defaults: HashMap<String, String>,
     /// `Some` once file caching is enabled; shared across clones.
-    file_cache: Option<Arc<RwLock<HashMap<String, Arc<str>>>>>,
+    file_cache: Option<FileCache>,
 }
 impl PromptLoader {
     /// Load from a directory, preserving the server's existing lookup behavior.

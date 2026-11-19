@@ -45,6 +45,17 @@ curve25519-dalek = { git = "https://github.com/signalapp/curve25519-dalek", tag 
 # while presage-store-sqlite pins 0.36, and `links = "sqlite3"` cannot duplicate.
 libsqlite3-sys = { version = "0.36.0", git = "https://github.com/whisperfish/rusqlite", rev = "2a42b3354c9194700d08aa070f70a131a470e7dc" }
 
+# SurrealDB's unoptimized embedded query frames can exhaust the default thread
+# stack beneath application futures (seen with 3.3.x in the test suite).
+[profile.dev.package.surrealdb-core]
+opt-level = 1
+
+[profile.dev.package.surrealdb-datastore]
+opt-level = 1
+
+[profile.dev.package.surrealdb-idx]
+opt-level = 1
+
 # Presage requires optimized ML-KEM to avoid stack overflow when decrypting
 # PQXDH prekey messages in development and test builds.
 [profile.dev.package.libcrux-ml-kem]
