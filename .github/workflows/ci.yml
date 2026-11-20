@@ -40,6 +40,16 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # The workspace now builds the harness, PKM and sandbox crates plus the AWS
+      # SDK, and the test targets alone overflow the runner's default free disk
+      # ("No space left on device" mid-run, which also loses the job log). The
+      # runner image ships several large toolchains this job never uses.
+      - name: Free disk space
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL
+          sudo docker image prune --all --force >/dev/null 2>&1 || true
+          df -h /
+
       - name: Install native build deps
         # Mirrors build/pkgs/builder-rust-apt.txt (libclang for bindgen-based
         # -sys crates; protobuf-compiler for presage's build scripts). The
