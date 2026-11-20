@@ -103,3 +103,28 @@ read and re-applied by hand.
   Bedrock is not used today? (The harness pulls them unconditionally.)
 - Does the fork want `frona-pkm`'s extraction at all, given fork PKM changes
   are small (0.9k lines) but the replaced tree is ~36k?
+
+## M0 trial run — 2026-11-20 (correction to "cheap")
+
+Bumped `rig-core` to 0.46 (`features = ["reqwest"]`, as upstream) on a scratch
+tree and ran `cargo check -p frona-server` (needs Rust >= 1.97.1; the 1.97.0
+sandbox toolchain was too old, 1.98.1 worked). Result: **95 compile errors in
+the first pass, across 16 files**, concentrated in `inference/provider/*`
+(adapter construction), `inference/error.rs`, `tool_loop.rs`,
+`credential/managed/integration/*` and `chat/message/error.rs`. Rig 0.46
+reorganised its module paths (`client::CompletionClient`, `ModelListingClient`,
+`completion::CompletionModel`, per-provider `Client`/`CompletionsClient`/
+auth types, `ToolCallId`), so the first-pass count understates the cascade.
+
+Upstream's own migration (`2c56acbd`) touched about 50 non-harness server
+files plus tests (`chat_compaction`, `tool_signature_replay`,
+`usage_service_e2e`, ...) and added a 713-line `history_compat.rs`: **Rig 0.46
+changed the serialised message shapes** (tool-call ids), so histories stored
+by 0.42-era builds must be decoded through a legacy path. That is a data
+compatibility requirement for this fork's existing deployments, not just a
+compile fix; it needs tests against real stored histories.
+
+Revised view: M0 is separable from the harness but is **not** a quick step. It
+should be its own multi-PR effort (provider construction, then streaming/tool
+loop, then history compat, then pricing/usage), validated by the full backend
+suite in CI — the local sandbox cannot run it. No code from the trial was kept.
