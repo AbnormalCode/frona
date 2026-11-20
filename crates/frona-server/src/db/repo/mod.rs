@@ -18,6 +18,7 @@ pub mod notifications;
 pub mod oauth;
 pub mod pkm;
 pub mod policies;
+pub mod push_subscriptions;
 pub mod shares;
 pub mod spaces;
 pub mod tasks;

@@ -17,6 +17,7 @@ mod messages;
 mod misc;
 mod navigation;
 mod notifications;
+mod push;
 mod security;
 mod spaces;
 mod system;
@@ -227,6 +228,7 @@ fn build_app(state: AppState) -> Router {
         .merge(routes::metrics::router())
         .merge(routes::config::router())
         .merge(routes::notifications::router())
+        .merge(routes::push::router())
         .merge(routes::apps::router())
         .merge(routes::mcp::router())
         .merge(routes::system::router())

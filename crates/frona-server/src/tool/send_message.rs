@@ -2,7 +2,6 @@ use serde_json::Value;
 
 use crate::agent::service::AgentService;
 use crate::agent::task::service::TaskService;
-use crate::chat::broadcast::BroadcastService;
 use crate::chat::models::{Chat, CreateChatRequest};
 use crate::chat::service::ChatService;
 use crate::core::error::AppError;
@@ -18,7 +17,6 @@ use super::{InferenceContext, ToolOutput};
 pub struct SendMessageTool {
     chat_service: ChatService,
     notification_service: NotificationService,
-    broadcast_service: BroadcastService,
     agent_service: AgentService,
     task_service: TaskService,
     prompts: PromptLoader,
@@ -28,7 +26,6 @@ impl SendMessageTool {
     pub fn new(
         chat_service: ChatService,
         notification_service: NotificationService,
-        broadcast_service: BroadcastService,
         agent_service: AgentService,
         task_service: TaskService,
         prompts: PromptLoader,
@@ -36,7 +33,6 @@ impl SendMessageTool {
         Self {
             chat_service,
             notification_service,
-            broadcast_service,
             agent_service,
             task_service,
             prompts,
@@ -121,10 +117,11 @@ impl SendMessageTool {
             content
         };
 
-        if let Ok(notification) = self
+        let _ = self
             .notification_service
-            .create(
+            .create_and_notify(
                 &ctx.user.id,
+                crate::notification::models::NotificationCategory::AgentMessage,
                 NotificationData::Agent {
                     agent_id: ctx.agent.id.clone(),
                     chat_id: resolved_chat.id.clone(),
@@ -133,11 +130,7 @@ impl SendMessageTool {
                 ctx.agent.name.clone(),
                 truncated_body,
             )
-            .await
-        {
-            self.broadcast_service
-                .send_notification(&ctx.user.id, notification);
-        }
+            .await;
 
         Ok(ToolOutput::text(
             serde_json::json!({

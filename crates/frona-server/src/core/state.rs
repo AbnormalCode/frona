@@ -29,9 +29,12 @@ use crate::core::execution::ExecutionRegistry;
 use crate::credential::keypair::service::KeyPairService;
 use crate::credential::presign::PresignService;
 use crate::credential::vault::service::VaultService;
+use crate::db::repo::push_subscriptions::SurrealPushSubscriptionRepo;
 use crate::inference::config::ModelRegistryConfig;
 use crate::memory::basic::BasicMemoryService;
 use crate::memory::pkm::PkmService;
+use crate::notification::push_repository::PushSubscriptionRepository;
+use crate::notification::push_sender::PushSender;
 use crate::notification::service::NotificationService;
 use crate::policy::service::PolicyService;
 use crate::space::service::SpaceService;
@@ -140,6 +143,8 @@ pub struct AppState {
     pub active_sessions: ActiveSessions,
     pub execution_registry: ExecutionRegistry,
     pub notification_service: NotificationService,
+    pub push_subscription_repo: Arc<dyn PushSubscriptionRepository>,
+    pub push_sender: Option<Arc<PushSender>>,
     pub sandbox_factory: Arc<SandboxFactory>,
     pub sandbox_manager: Arc<SandboxManager>,
     pub cli_tools_config: Arc<Vec<CliToolConfig>>,
@@ -716,6 +721,33 @@ impl AppState {
             task_executor.clone(),
         ));
 
+        let push_subscription_repo: Arc<dyn PushSubscriptionRepository> =
+            Arc::new(SurrealPushSubscriptionRepo::new(db.clone()));
+        // A malformed VAPID private key must not be reported as "not
+        // configured" - that reads as "push is off by choice" while the real
+        // problem is a bad key, and every notification silently goes nowhere.
+        let push_sender = match PushSender::new(&config.push, push_subscription_repo.clone()) {
+            Ok(sender) => sender.map(Arc::new),
+            Err(e) => {
+                tracing::error!(
+                    error = %e,
+                    "Push notifications disabled: the configured VAPID private key could not be \
+                     parsed. Check `push.vapid_private_key`, or unset it to use the generated pair."
+                );
+                None
+            }
+        };
+        let notification_service = NotificationService::with_broadcast(
+            SurrealRepo::new(db.clone()),
+            broadcast_service.clone(),
+            push_sender.clone(),
+        )
+        .with_push_links(presign_service.clone());
+        match &push_sender {
+            Some(_) => tracing::info!("Push notifications enabled (VAPID configured)"),
+            None => tracing::info!("Push notifications disabled (no usable VAPID key pair)"),
+        }
+
         let state = Self {
             config_service,
             model_provider_service,
@@ -740,7 +772,9 @@ impl AppState {
             browser_session_manager: Arc::new(BrowserSessionManager::new(config.browser.clone())),
             active_sessions,
             execution_registry,
-            notification_service: NotificationService::new(SurrealRepo::new(db.clone())),
+            notification_service: notification_service.clone(),
+            push_subscription_repo,
+            push_sender,
             policy_service: policy_service.clone(),
             tool_manager,
             sandbox_factory,

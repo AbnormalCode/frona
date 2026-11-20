@@ -705,6 +705,31 @@ impl Default for McpConfig {
     }
 }
 
+#[derive(Clone, Debug, Deserialize, Serialize, JsonSchema)]
+#[serde(default)]
+pub struct PushConfig {
+    #[schemars(
+        description = "VAPID public key (base64url-encoded, uncompressed P-256). Leave unset and the server generates a pair and keeps it in `{data_dir}/system/vapid.json`."
+    )]
+    pub vapid_public_key: Option<String>,
+    #[schemars(
+        description = "VAPID private key (base64url-encoded P-256 scalar). Leave unset to use the server's generated pair; set it without the matching public key and push stays off."
+    )]
+    pub vapid_private_key: Option<String>,
+    #[schemars(description = "VAPID subject — a mailto: URL or the site's HTTPS URL.")]
+    pub subject: String,
+}
+
+impl Default for PushConfig {
+    fn default() -> Self {
+        Self {
+            vapid_public_key: None,
+            vapid_private_key: None,
+            subject: "mailto:noreply@frona.local".into(),
+        }
+    }
+}
+
 #[derive(Clone, Debug, Deserialize, Serialize, Default, JsonSchema)]
 #[serde(default)]
 pub struct Config {
@@ -728,6 +753,8 @@ pub struct Config {
     pub channel: ChannelConfig,
     #[serde(default)]
     pub share: ShareConfig,
+    #[serde(default)]
+    pub push: PushConfig,
     #[serde(default)]
     pub signal: SignalConfig,
     #[serde(default)]

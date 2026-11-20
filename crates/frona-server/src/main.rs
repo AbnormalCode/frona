@@ -48,6 +48,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     let mut loaded = ConfigService::load(config_file_path())?;
+    // Resolve the Web Push key pair before anything reads `config.push`: unless the
+    // deployment configured its own, the server generates one and keeps it.
+    frona::notification::vapid::ensure_keys(
+        &mut loaded.config.push,
+        &loaded.config.storage.data_dir,
+    );
     let config = loaded.config.clone();
     let models = loaded.models.take();
 
@@ -310,6 +316,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .merge(routes::system::router())
         .merge(routes::config::router())
         .merge(routes::providers::router())
+        .merge(routes::push::router())
         .merge(routes::credential_logins::router())
         .merge(routes::provider_models::router());
     // Register the PKM sync API only when PKM is the active backend - a Basic install

@@ -2,7 +2,6 @@ use serde_json::Value;
 
 use crate::app::models::{App, AppManifest, AppResponse};
 use crate::app::service::AppService;
-use crate::chat::broadcast::BroadcastService;
 use crate::core::error::AppError;
 use crate::inference::hitl::{Hitl, HitlOutcome, HitlRequest, HitlResponse};
 use crate::inference::tool_call::ToolStatus;
@@ -19,7 +18,6 @@ pub struct ManageAppTool {
     app_service: AppService,
     prompts: PromptLoader,
     notification_service: NotificationService,
-    broadcast_service: BroadcastService,
     storage_service: StorageService,
     public_base_url: String,
 }
@@ -29,7 +27,6 @@ impl ManageAppTool {
         app_service: AppService,
         prompts: PromptLoader,
         notification_service: NotificationService,
-        broadcast_service: BroadcastService,
         storage_service: StorageService,
         public_base_url: String,
     ) -> Self {
@@ -37,7 +34,6 @@ impl ManageAppTool {
             app_service,
             prompts,
             notification_service,
-            broadcast_service,
             storage_service,
             public_base_url,
         }
@@ -343,10 +339,16 @@ impl ManageAppTool {
         level: NotificationLevel,
         title: &str,
     ) {
-        if let Ok(notification) = self
+        let category = if matches!(level, NotificationLevel::Error) {
+            crate::notification::models::NotificationCategory::Failure
+        } else {
+            crate::notification::models::NotificationCategory::Activity
+        };
+        let _ = self
             .notification_service
-            .create(
+            .create_and_notify(
                 &ctx.user.id,
+                category,
                 NotificationData::App {
                     app_handle: app_handle.to_string(),
                     action: action.to_string(),
@@ -355,11 +357,7 @@ impl ManageAppTool {
                 title.to_string(),
                 String::new(),
             )
-            .await
-        {
-            self.broadcast_service
-                .send_notification(&ctx.user.id, notification);
-        }
+            .await;
     }
 
     async fn resolve_app_id(

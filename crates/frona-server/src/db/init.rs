@@ -20,6 +20,8 @@ const USER_OWNED_TABLES: &[(&str, &str)] = &[
     ("memory", "user_id"),
     ("keypair", "user_id"),
     ("notification", "user_id"),
+    ("push_subscription", "user_id"),
+    ("notification_preferences", "user_id"),
     ("policy", "user_id"),
     ("oauth_identity", "user_id"),
     ("api_token", "user_id"),
@@ -171,6 +173,12 @@ pub async fn setup_schema(db: &Surreal<Db>) -> Result<(), surrealdb::Error> {
         DEFINE INDEX IF NOT EXISTS idx_oauth_identity_sub ON TABLE oauth_identity COLUMNS external_sub UNIQUE;
         DEFINE INDEX IF NOT EXISTS idx_oauth_identity_user ON TABLE oauth_identity COLUMNS user_id;
 
+        DEFINE TABLE IF NOT EXISTS push_subscription SCHEMALESS;
+        DEFINE INDEX IF NOT EXISTS idx_push_subscription_user ON TABLE push_subscription COLUMNS user_id;
+        DEFINE INDEX IF NOT EXISTS idx_push_subscription_user_endpoint ON TABLE push_subscription COLUMNS user_id, endpoint UNIQUE;
+
+        -- Which notification categories each user wants pushed. Keyed by user id.
+        DEFINE TABLE IF NOT EXISTS notification_preferences SCHEMALESS;
         DEFINE TABLE IF NOT EXISTS notification SCHEMALESS;
         DEFINE INDEX IF NOT EXISTS idx_notification_user ON TABLE notification COLUMNS user_id;
 

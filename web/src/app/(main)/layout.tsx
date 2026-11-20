@@ -1,18 +1,34 @@
 "use client";
 
-import { Suspense } from "react";
+import { Suspense, useEffect } from "react";
+import { useRouter } from "next/navigation";
 import { AppGate } from "@/components/app-gate";
 import { NavigationProvider } from "@/lib/navigation-context";
 import { NotificationProvider } from "@/lib/notification-context";
 import { SessionProvider } from "@/lib/session-context";
 import { TopBar } from "@/components/layout/top-bar";
 import { ActivityProvider } from "@/lib/activity-context";
+import {
+  registerServiceWorker,
+  setNotificationNavigator,
+} from "@/lib/sw-register";
 
 export default function MainLayout({
   children,
 }: {
   children: React.ReactNode;
 }) {
+  const router = useRouter();
+
+  useEffect(() => {
+    registerServiceWorker();
+  }, []);
+
+  useEffect(() => {
+    setNotificationNavigator((path) => router.push(path));
+    return () => setNotificationNavigator(null);
+  }, [router]);
+
   return (
     <NavigationProvider>
       <AppGate>
@@ -20,7 +36,7 @@ export default function MainLayout({
           <Suspense>
             <SessionProvider>
               <ActivityProvider>
-                <div className="flex flex-col h-screen">
+                <div className="flex flex-col h-[100dvh]">
                   <TopBar />
                   <div className="flex-1 overflow-hidden">
                     {children}

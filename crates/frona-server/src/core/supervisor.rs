@@ -201,7 +201,7 @@ async fn hibernate_tick<S: Supervisor>(supervisor: &Arc<S>, threshold: Duration,
 async fn send_notification<S: Supervisor>(
     supervisor: &Arc<S>,
     notification_service: &NotificationService,
-    broadcast_service: &BroadcastService,
+    _broadcast_service: &BroadcastService,
     id: &str,
     action: &str,
     level: NotificationLevel,
@@ -212,12 +212,16 @@ async fn send_notification<S: Supervisor>(
         return;
     };
     let data = supervisor.notification_data(id, action).await;
-    if let Ok(notification) = notification_service
-        .create(&user_id, data, level, title.to_string(), body.to_string())
-        .await
-    {
-        broadcast_service.send_notification(&user_id, notification);
-    }
+    let _ = notification_service
+        .create_and_notify(
+            &user_id,
+            crate::notification::models::NotificationCategory::Failure,
+            data,
+            level,
+            title.to_string(),
+            body.to_string(),
+        )
+        .await;
 }
 
 #[cfg(test)]

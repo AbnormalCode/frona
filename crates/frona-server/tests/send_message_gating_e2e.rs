@@ -457,7 +457,6 @@ async fn portable_send_message_resolver_uses_shared_model_budget_before_sending(
     let tool = frona::tool::send_message::SendMessageTool::new(
         state.chat_service.clone(),
         state.notification_service.clone(),
-        state.broadcast_service.clone(),
         state.agent_service.clone(),
         state.task_service.clone(),
         state.prompts.clone(),
