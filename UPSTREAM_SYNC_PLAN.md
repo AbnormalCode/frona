@@ -692,3 +692,11 @@ Recommendation: M0 (Rig 0.46 alone) and M1 (`frona-harness` as an unwired
 crate) are cheap and separable; wiring the server (M2) is gated on a design for
 hosting the fork's OpenRouter routing/caching, billing, vision and
 transcription. PR #174 (Groups K, L, P) is green in CI.
+
+### Rebuild-from-upstream option — 2026-11-20
+
+Inventory and OpenRouter spike: [`FORK_REAPPLY_INVENTORY.md`](FORK_REAPPLY_INVENTORY.md).
+Finding: OpenRouter routing and cost accounting can be hosted on the upstream
+harness without patching it; only the prompt-caching breakpoint is open and needs
+a live test. Upstream now covers two of the fork's OpenRouter fixes
+(cache-write pricing, vendor-prefixed catalog lookups) and Azure.
