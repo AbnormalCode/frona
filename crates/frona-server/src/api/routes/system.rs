@@ -42,9 +42,10 @@ async fn health_handler(State(state): State<AppState>) -> impl IntoResponse {
 async fn info_handler(
     _auth: AuthUser,
     State(state): State<AppState>,
-) -> axum::Json<serde_json::Value> {
+) -> Result<axum::Json<serde_json::Value>, ApiError> {
     use sysinfo::System;
-    let mut sys = System::new();
+    let mut sys = System::new()
+        .map_err(|error| AppError::Internal(format!("initialize system information: {error}")))?;
     sys.refresh_memory();
     let total_memory = sys
         .cgroup_limits()
@@ -52,7 +53,7 @@ async fn info_handler(
         .unwrap_or_else(|| sys.total_memory());
     let cpus = System::physical_core_count().unwrap_or(0);
 
-    axum::Json(json!({
+    Ok(axum::Json(json!({
         "version": crate::core::app_version(),
         "revision": option_env!("FRONA_BUILD_REVISION")
             .filter(|revision| !revision.is_empty() && *revision != "unknown"),
@@ -60,7 +61,7 @@ async fn info_handler(
         "total_memory_bytes": total_memory,
         "sandbox_driver": state.sandbox_factory.driver_id(),
         "server_timezone": state.config.server.timezone,
-    }))
+    })))
 }
 
 async fn version_handler(_auth: AuthUser) -> axum::Json<serde_json::Value> {

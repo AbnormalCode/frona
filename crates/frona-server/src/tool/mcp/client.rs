@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use rmcp::ServiceExt;
 use rmcp::model::{
-    CallToolRequestParams, CallToolResult, ClientCapabilities, ClientInfo, Implementation,
+    CallToolRequestParams, CallToolResult, ClientCapabilities, ClientConfig, Implementation,
     ReadResourceRequestParams, ReadResourceResult, Resource, ServerPeerInfo, Tool,
 };
 use rmcp::service::{NotificationContext, RoleClient, RunningService};
@@ -19,11 +19,11 @@ use super::models::CachedMcpTool;
 /// can refresh it without racing the tool-calling path.
 pub struct McpClientHandler {
     cached_tools: Arc<RwLock<Vec<CachedMcpTool>>>,
-    client_info: ClientInfo,
+    client_info: ClientConfig,
 }
 
 impl McpClientHandler {
-    pub fn new(client_info: ClientInfo, cached_tools: Arc<RwLock<Vec<CachedMcpTool>>>) -> Self {
+    pub fn new(client_info: ClientConfig, cached_tools: Arc<RwLock<Vec<CachedMcpTool>>>) -> Self {
         Self {
             cached_tools,
             client_info,
@@ -46,7 +46,7 @@ fn read_tools(slot: &RwLock<Vec<CachedMcpTool>>) -> Vec<CachedMcpTool> {
 }
 
 impl ClientHandler for McpClientHandler {
-    fn get_info(&self) -> ClientInfo {
+    fn get_info(&self) -> ClientConfig {
         self.client_info.clone()
     }
 
@@ -82,7 +82,7 @@ impl McpClient {
     /// Perform the MCP `initialize` handshake over the given transport, then fetch the
     /// initial `tools/list` and seed the cache. Returns an `McpClient` whose lifetime
     /// keeps the underlying connection alive.
-    pub async fn connect<T, E, A>(transport: T, client_info: ClientInfo) -> Result<Self, AppError>
+    pub async fn connect<T, E, A>(transport: T, client_info: ClientConfig) -> Result<Self, AppError>
     where
         T: IntoTransport<RoleClient, E, A>,
         E: std::error::Error + Send + Sync + 'static,
@@ -188,8 +188,8 @@ impl McpClient {
     }
 }
 
-pub fn default_client_info() -> ClientInfo {
-    ClientInfo::new(
+pub fn default_client_info() -> ClientConfig {
+    ClientConfig::new(
         ClientCapabilities::default(),
         Implementation::new("frona", crate::core::app_version()),
     )

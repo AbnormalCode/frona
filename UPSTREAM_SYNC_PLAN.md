@@ -567,3 +567,120 @@ Not ported (needs Podman/Docker/CI): `2226111`, `ced1656`, `e3cd601`, `55793b3`,
 `ecd9272`, `055fe02`, `a09efd8`, `08213a2`, `ae88dfe`, `f104c28` and Group B/E
 dev-container work; `af0491e`, `30852f7`, `072d158` (target test files absent).
 Version bump to 2026.11.0 deferred until Group G.
+
+## Audit update — 2026-11-13
+
+Upstream `fronalabs/frona` `main` @ `e9095623` (2026-11-12). **49 commits**
+landed after `f6bb78f` (the 2026-11-06 audit head); 659 files, +84k/-29k. The
+fork (`703f3d9b`, v2026.11.0 example tags, Groups F–J and G already ported)
+has none of them. No shared ancestor, so keep porting by content.
+
+This range is dominated by one architectural change, not many small fixes:
+upstream extracted a portable agent runtime into **new crates `frona-harness`
+and `frona-pkm`** and rebuilt the server on top of them. The fork has neither
+crate (`frona-text`, `frona-model-catalog` only), and pins `rig-core 0.42`
+(upstream: 0.46).
+
+**Group K — dependencies/stability (port first; small, independent)**
+`47eafcf6` (SurrealDB upgrade + concurrent persistence fixes; fork pins
+`=3.2.4`), `47afabd2` (Cargo refresh), `74369f6f` (Signal/WhatsApp deps — keep
+fork git pins for presage), `b3cd197a` (toolchain components). Regenerate
+Cargo.lock with `cargo update -p`; do not hand-merge it.
+
+**Group L — `frona-text` additions (small, prerequisite for M/N)**
+`b6dff1e5`, `559d2a2f`, `63904012`, `a0704eb3` (shared prompt loading/rendering,
+redaction, default context), `0ce3ae28` (publish prep). Fork already has
+`frona-text`; these extend it. Check fork's prompt-loading call sites.
+
+**Group M — harness extraction (large; needs a go/no-go decision first)**
+`e2991065`, `4b0d7967` (+12k, creates `frona-harness`), `d6f934d7`, `9206c96d`,
+`e33f5827`, `b0d1d7ee`, `3d7e7597`, `67137f28`, `802f7967`, `1343aa70`,
+`5ea2e93e`, `1e11256c`, `db675e10`, `0f419c28`, `2c56acbd` (Rig 0.46 migration,
+119 files), `66793b75`, `a0ab8cf5`, `58c6a9fe`, plus layout/test commits
+(`3a854e4d`, `d0a95995`, `38c287cf`, `bd098b5a`, `822e5b1a`, `9b23a916`,
+`2f2edc8f`). The server's inference/chat/tool dispatch now routes through the
+harness. This collides with the fork's `inference/provider/*` (Group C),
+OpenRouter routing/cost accounting, Azure/generic providers, and the Group G
+compaction/history port just landed. Recommendation: spike first (as Group C
+did — `GROUP_M_HARNESS_SCOPING.md`): confirm the fork's provider recipes and
+`billing` field fit the harness's "Rig provider connections"
+(`a0ab8cf5`), then port in the order above as one multi-PR effort, Rig 0.46
+bump (`2c56acbd`) before the execution-unification commits.
+
+**Group N — PKM extraction (depends on L and M)**
+`5e2ea29e`, `f673cee7`, `5d2ea2cc`, `d3b25b2c`, `0db678f4`, `e63a1813`,
+`8041d4f0`, `2347080e` (202 files, -40k: server `memory/pkm/*` collapses into
+the new `frona-pkm` crate). Port last. Fork PKM changes since the 2026-09
+memory port must be diffed against upstream's old `memory/pkm` first so fork
+fixes aren't lost when that tree is replaced.
+
+**Group O — build/release (needs Podman/CI; low urgency)**
+`6f7f4ab2`, `9dcf037e` (Kache/dev container; joins Group B), `9886ec7d`,
+`8eb48d8a`, `284e7d40`, `c56baa50`, `e9095623` (crates.io library release
+automation: `build/release-crates.sh`, `build/RELEASE.md`, docs). The release
+automation is optional for a fork — skip unless publishing crates.
+
+**Suggested order:** K → L → Group M spike → M → N; O opportunistically.
+If M is judged too costly, the fallback is to freeze at the current baseline,
+take only K/L plus targeted bug fixes, and note the intentional divergence at
+the top of this file. Bump version past 2026.11.0 only after M or that freeze
+decision.
+
+**Divergence control:** the harness/PKM extraction makes future upstream
+commits land in new crates the fork lacks, so each month of delay raises
+porting cost. Decide M soon.
+
+### Status update — 2026-11-13 (Group K landed, Group L partial)
+
+**Group K:** `47eafcf6` (SurrealDB 3.3.5, concurrent-write fixes, rewritten
+ontology CAS test) and `74369f6f` (Presage `4b817406`, wa-rs on `homun-app`,
+`libcrux-ml-kem` opt-level 3 in the root `Cargo.toml` profile) landed.
+Lock updated with `cargo update -p`. Verified: `cargo check --workspace
+--tests`; `db::repo` lib tests (50 pass). Skipped: `b3cd197a` (bumps toolchain
+to Rust 1.99.1/Node 24.22; fork stays on 1.98.1 until CI can validate);
+`47afabd2` (general Cargo refresh) still open. Upstream's `.cargo/config.toml`
+(`47eafcf6`, `74369f6f`) belongs to Group O's dev-container work.
+
+**Group L:** the `frona-text` crate itself is ported wholesale from upstream
+(`prompt` module behind the `prompts` feature, `redaction` behind
+`redaction`, README/LICENSE, publish metadata): `b6dff1e5` (crate part),
+`559d2a2f`, `63904012`, `a0704eb3`, `0ce3ae28`. 144 tests pass with
+`--all-features`. **Server migration (2026-11-15):** `agent::prompt::PromptLoader` is now a
+re-export of `frona_text::prompt::PromptLoader`. The fork's read cache was
+added upstream-side as an opt-in `with_file_cache()` (new unit test) and is
+enabled where `AppState` builds the loader, so runtime behavior is unchanged;
+`From<PromptError> for AppError` added. `core::template` is left in place (still
+used by other callers; the loader no longer needs it). Verified:
+`cargo check -p frona-server --tests`, frona-text tests (145), server
+`agent::`/voice/task_control/skills/compactor lib tests. Remaining from L:
+nothing. Upstream has since added 10 more commits (through `05332fd0`:
+Sigma 4 memory graph, frontend dependency upgrades, tool-batch concurrency,
+streaming-stall fix, sandbox grant resolution) — fold into the next audit.
+
+### Status update — 2026-11-15 (`47afabd2` ported)
+
+Ported the non-harness parts of `47afabd2`: sysinfo 0.40 (fallible
+`System::new()` in `/api/system/info` and the sandbox resource monitor),
+jsonschema 0.61 (server, model-catalog), similar 3 (browser), and a full
+`cargo update` (lock only; SurrealDB `=3.3.5` and the presage/wa-rs git pins
+held by their manifests). Harness/Bedrock manifest hunks skipped (no harness
+crate in the fork). Verified: `cargo check --workspace --tests`, `cargo fmt
+--check`; targeted lib tests (sandbox, core::config, db::repo, api::: 217) pass.
+
+### Audit update — 2026-11-18 (upstream through `05332fd0`)
+
+Eleven upstream commits after `e9095623`. Ported (Group P, small fixes):
+`a4841cea` (dispatcher releases the session read guard before cleanup, fixing
+a streaming stall; test kept, harness-based neighbor test dropped),
+`2f3c822e` (unconditional Cedar connect forbid overrides permits; unit and
+e2e tests), `4d9dad5d` (memory graph on Sigma 4), `e88cb403` (frontend
+dependency upgrades incl. lexical 0.53 / assistant-ui 0.15.36 — this lifts the
+earlier lexical hold; lock taken from upstream and pruned of
+`sparql-formatter`, which the fork doesn't use; trigger-adapter serialization
+change ported with it). Verified: web tsc/eslint clean, vitest 1014 pass;
+`policy::sandbox` + `chat::broadcast` lib tests, `policy_sandbox_e2e` (19).
+
+Not ported: `f7774c1e`, `2fc32f41`, `576be457` (sandbox/harness extraction,
+bounded tool-batch concurrency — Group M territory; `f7774c1e` is another new
+crate-extraction, 60 files), `1e230ba9`, `c27d6fc7`, `05332fd0`, `2428d4e9`
+(release automation, container pins, crate docs — Group O).

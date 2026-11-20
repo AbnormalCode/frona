@@ -341,6 +341,7 @@ impl AppState {
             .to_string_lossy()
             .into_owned();
         let prompt_loader = PromptLoader::new(shared_config_abs.join("prompts"))
+            .with_file_cache()
             .with_var("schema_path", &schema_path);
 
         let cli_tools_config = load_cli_tool_configs(&prompt_loader);
