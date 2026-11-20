@@ -1,0 +1,137 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Tag name to release (e.g. v0.0.1)"
+        required: true
+
+permissions:
+  contents: write
+  packages: write
+
+jobs:
+  docker:
+    name: Build & Push Docker Image
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    outputs:
+      tag: ${{ steps.tag.outputs.name }}
+      is-prerelease: ${{ steps.check.outputs.is-prerelease }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event_name == 'workflow_dispatch' && 'main' || github.ref }}
+
+      - name: Resolve tag name
+        id: tag
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            TAG="${{ github.event.inputs.tag }}"
+            if ! [[ "$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[A-Za-z0-9][A-Za-z0-9.-]*)?$ ]]; then
+              echo "Error: tag '$TAG' does not match expected version pattern (e.g. v2026.5.1 or v2026.5.1-RC1)"
+              exit 1
+            fi
+            echo "name=$TAG" >> "$GITHUB_OUTPUT"
+          else
+            echo "name=${{ github.ref_name }}" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Check if pre-release
+        id: check
+        run: |
+          TAG="${{ steps.tag.outputs.name }}"
+          # Pre-release tags contain a hyphen (e.g. v0.2.0-ALPHA1, v0.2.0-RC1)
+          if [[ "$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+-[A-Za-z0-9][A-Za-z0-9.-]*$ ]]; then
+            echo "is-prerelease=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "is-prerelease=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Docker metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ghcr.io/mpercy-git/frona
+          tags: |
+            type=raw,value=${{ steps.tag.outputs.name }}
+            type=raw,value=latest,enable=${{ steps.check.outputs.is-prerelease == 'false' }}
+
+      - name: Build and push
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: build/Dockerfile
+          target: prod
+          platforms: linux/amd64
+          push: true
+          build-args: |
+            VERSION=${{ steps.tag.outputs.name }}
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  github-release:
+    name: Create GitHub Release
+    needs: docker
+    runs-on: ubuntu-latest
+    steps:
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ needs.docker.outputs.tag }}
+          prerelease: ${{ needs.docker.outputs.is-prerelease == 'true' }}
+          generate_release_notes: true
+
+  update-examples:
+    name: Update Example Files
+    needs: docker
+    if: needs.docker.outputs.is-prerelease == 'false'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: main
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Update docker-compose image tag
+        run: |
+          TAG="${{ needs.docker.outputs.tag }}"
+          sed -i "s|image: ghcr.io/mpercy-git/frona:.*|image: ghcr.io/mpercy-git/frona:${TAG}|" \
+            examples/docker-compose/docker-compose.yml
+
+      - name: Update Kubernetes deployment image tag
+        run: |
+          TAG="${{ needs.docker.outputs.tag }}"
+          sed -i "s|image: ghcr.io/mpercy-git/frona:.*|image: ghcr.io/mpercy-git/frona:${TAG}|" \
+            examples/kubernetes/frona-deployment.yaml
+
+      - name: Commit and push updated examples
+        run: |
+          set -e
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add examples/docker-compose/docker-compose.yml examples/kubernetes/frona-deployment.yaml
+          if git diff --cached --quiet; then
+            echo "No changes to commit"
+          else
+            git commit -m "chore: update example image tags to ${{ needs.docker.outputs.tag }}"
+            git push origin main
+          fi

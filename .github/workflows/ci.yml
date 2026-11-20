@@ -1,0 +1,177 @@
+name: CI
+
+on:
+  # Branches are covered by `pull_request`. Triggering on every branch push as
+  # well ran the whole suite twice per commit, doubling runner load for no extra
+  # signal. `main` still runs on push so merged commits are checked.
+  push:
+    # The rebuild branch has no common history with main, so it cannot open a PR; run on push.
+    branches: [main, claude/rebuild-on-upstream]
+  pull_request:
+  workflow_dispatch:
+
+# A newer push to the same ref cancels an in-flight run.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # The server suite is split across parallel shards (cargo-nextest partitions)
+  # instead of one ~35 min serial run. Each shard compiles the tests once
+  # (~7 min, cached) and runs a third of them. A per-test timeout (see
+  # .config/nextest.toml) turns a stalled test into a named failure rather than
+  # a runner that goes silent until it is cancelled.
+  backend-shard:
+    name: Backend shard ${{ matrix.shard }}/3
+    runs-on: ubuntu-latest
+    # Observed on main: ~7 min to compile + ~12-15 min per shard. 40 min leaves
+    # generous headroom and still fails a genuine hang well before the default
+    # 360-minute runner timeout.
+    timeout-minutes: 40
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3]
+    # The repo's .cargo/config.toml pins build.target-dir to a Windows path
+    # (C:/temp/...). On Linux the "C:" colon makes cargo assemble an invalid
+    # dynamic-library path and fail before compiling anything. Override it.
+    env:
+      CARGO_TARGET_DIR: target
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install native build deps
+        # Mirrors build/pkgs/builder-rust-apt.txt (libclang for bindgen-based
+        # -sys crates; protobuf-compiler for presage's build scripts). The
+        # ubuntu runner already provides build-essential, pkg-config and libssl.
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends libclang-dev protobuf-compiler
+
+      # Native toolchain (not a rust: container) to avoid the GitHub Actions
+      # "failed to join paths from $LD_LIBRARY_PATH" breakage that the rust
+      # Docker image hits inside container jobs. Pinned to match build/Dockerfile.
+      # This action also caches ~/.cargo and target keyed on Cargo.lock.
+      - name: Install Rust 1.98.1
+        uses: actions-rust-lang/setup-rust-toolchain@v1
+        with:
+          toolchain: "1.98.1"
+          # This action defaults RUSTFLAGS to "-D warnings"; the codebase (and
+          # the Docker release build) don't treat warnings as errors, so clear
+          # it. CI is here to catch compile errors and test failures, not to
+          # enforce a zero-warning policy the project hasn't adopted.
+          rustflags: ""
+
+      - name: Install cargo-nextest
+        uses: taiki-e/install-action@v2
+        with:
+          tool: nextest
+
+      # Compile every other crate's tests too - the check that can't run on
+      # Windows (the sandbox's Unix-only APIs). Done once, on shard 1: the
+      # frona-server tests are compiled by every shard's nextest run below, and
+      # the other crates' tests are only compiled here (frona-browser's tests
+      # need a real browser; mcp_e2e is #[ignore]d and needs an external binary).
+      # `cargo build --tests` (not `cargo test --no-run`, which rejects
+      # --keep-going) so one failing test crate doesn't mask errors in the
+      # others - we get the full picture in a single run.
+      - name: Compile all tests
+        if: matrix.shard == 1
+        run: cargo build --workspace --tests --keep-going --locked
+
+      # Run this shard's third of the frona-server suite (channels, tasks,
+      # inference, policy, ...). `--no-fail-fast` is the ci profile's
+      # `fail-fast = false`, so every failure in the shard shows in one run.
+      - name: Run server tests
+        timeout-minutes: 35
+        run: >-
+          cargo nextest run -p frona-server --locked --profile ci
+          --partition count:${{ matrix.shard }}/3
+
+  # Single, stable check name for the whole backend suite, so a branch
+  # protection rule requiring "Backend (cargo test)" keeps working no matter how
+  # many shards run behind it.
+  backend:
+    name: Backend (cargo test)
+    runs-on: ubuntu-latest
+    needs: backend-shard
+    if: always()
+    steps:
+      - name: Require every shard to pass
+        run: |
+          result="${{ needs.backend-shard.result }}"
+          echo "backend shards: $result"
+          [ "$result" = "success" ]
+
+  # Formatting and lints. These have always been defined in mise.toml
+  # (`fmt:check`, `lint:backend`) but were never enforced anywhere, so `main`
+  # drifted to 92 unformatted files and 9 clippy findings. Gating them here is
+  # what stops that recurring.
+  lint:
+    name: Lint (fmt, clippy)
+    runs-on: ubuntu-latest
+    # Same reason as the backend job: .cargo/config.toml pins build.target-dir
+    # to a Windows path, which is not a valid path on Linux.
+    env:
+      CARGO_TARGET_DIR: target
+    steps:
+      - uses: actions/checkout@v4
+
+      # Clippy type-checks the whole workspace, so it needs the same native
+      # deps the backend job installs (libclang for bindgen-based -sys crates,
+      # protoc for presage's build scripts).
+      - name: Install native build deps
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends libclang-dev protobuf-compiler
+
+      - name: Install Rust 1.98.1
+        uses: actions-rust-lang/setup-rust-toolchain@v1
+        with:
+          toolchain: "1.98.1"
+          components: rustfmt, clippy
+          # Deliberately empty, for the same reason as the backend job: this
+          # would put -D warnings in RUSTFLAGS for the entire build, including
+          # dependencies, and the project has not adopted a zero-rustc-warning
+          # policy. The clippy step below opts into -D warnings for this
+          # workspace's own lints only, which is exactly what mise's
+          # `lint:backend` task already asks for.
+          rustflags: ""
+
+      # First because it is instant and needs no compilation: a formatting slip
+      # fails in seconds rather than after a full clippy build.
+      - name: Formatting
+        run: cargo fmt --all -- --check
+
+      # --all-targets is intentionally omitted, matching mise's `lint:backend`.
+      # Test code is therefore not linted; widening that is a follow-up, not a
+      # silent expansion of this gate.
+      - name: Clippy
+        run: cargo clippy --workspace --locked -- -D warnings
+
+  web:
+    name: Web (typecheck, lint, test)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: web
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      - name: Install deps
+        run: npm ci
+
+      - name: Typecheck
+        run: npx tsc --noEmit
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Test
+        run: npx vitest run
