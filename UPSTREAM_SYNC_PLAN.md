@@ -684,3 +684,11 @@ Not ported: `f7774c1e`, `2fc32f41`, `576be457` (sandbox/harness extraction,
 bounded tool-batch concurrency — Group M territory; `f7774c1e` is another new
 crate-extraction, 60 files), `1e230ba9`, `c27d6fc7`, `05332fd0`, `2428d4e9`
 (release automation, container pins, crate docs — Group O).
+
+### Group M scoping — 2026-11-20
+
+Spike done: see [`GROUP_M_HARNESS_SCOPING.md`](GROUP_M_HARNESS_SCOPING.md).
+Recommendation: M0 (Rig 0.46 alone) and M1 (`frona-harness` as an unwired
+crate) are cheap and separable; wiring the server (M2) is gated on a design for
+hosting the fork's OpenRouter routing/caching, billing, vision and
+transcription. PR #174 (Groups K, L, P) is green in CI.
