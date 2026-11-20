@@ -112,3 +112,11 @@ a carried patch; everything else is host code.
 5. DB/config compatibility run against a copy of a real deployment's data
    (fork tables: shares, push subscriptions, password-reset tokens, usage
    billing columns, `private_memory`) before switching `main`.
+
+## Decision log
+
+- 2026-11-20: owner judged the OpenRouter prompt-caching risk small. Proceed on
+  that basis without a prior live test; if caching misbehaves after the
+  rebuild, fall back to option (b) (typed breakpoint in the harness, carried
+  or proposed upstream). Caching correctness should be checked once against a
+  real OpenRouter key after the class B work lands, not before.
