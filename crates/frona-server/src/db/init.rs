@@ -7,8 +7,10 @@ use tracing::info;
 /// through its own cascade events below.
 const USER_OWNED_TABLES: &[(&str, &str)] = &[
     ("agent", "user_id"),
+    ("agent_share", "owner_id"),
     ("space", "user_id"),
     ("chat", "user_id"),
+    ("chat_share", "owner_id"),
     ("task", "user_id"),
     ("contact", "user_id"),
     ("credential", "user_id"),
@@ -61,6 +63,12 @@ pub async fn setup_schema(db: &Surreal<Db>) -> Result<(), surrealdb::Error> {
         DEFINE INDEX IF NOT EXISTS idx_agent_user ON TABLE agent COLUMNS user_id;
         DEFINE INDEX IF NOT EXISTS idx_agent_user_handle ON TABLE agent COLUMNS user_id, handle UNIQUE;
 
+        DEFINE TABLE IF NOT EXISTS agent_share SCHEMALESS;
+        DEFINE INDEX IF NOT EXISTS idx_agent_share_agent ON TABLE agent_share COLUMNS agent_id;
+        DEFINE INDEX IF NOT EXISTS idx_agent_share_owner ON TABLE agent_share COLUMNS owner_id;
+        DEFINE INDEX IF NOT EXISTS idx_agent_share_recipient ON TABLE agent_share COLUMNS recipient_id;
+        DEFINE INDEX IF NOT EXISTS idx_agent_share_unique ON TABLE agent_share COLUMNS agent_id, recipient_id UNIQUE;
+
         DEFINE TABLE IF NOT EXISTS space SCHEMALESS;
         DEFINE INDEX IF NOT EXISTS idx_space_user ON TABLE space COLUMNS user_id;
 
@@ -69,6 +77,12 @@ pub async fn setup_schema(db: &Surreal<Db>) -> Result<(), surrealdb::Error> {
         DEFINE INDEX IF NOT EXISTS idx_chat_space ON TABLE chat COLUMNS space_id;
         DEFINE INDEX IF NOT EXISTS idx_chat_channel ON TABLE chat COLUMNS channel_id;
         DEFINE INDEX IF NOT EXISTS idx_chat_channel_thread ON TABLE chat COLUMNS channel_id, channel_external_id UNIQUE;
+
+        DEFINE TABLE IF NOT EXISTS chat_share SCHEMALESS;
+        DEFINE INDEX IF NOT EXISTS idx_chat_share_chat ON TABLE chat_share COLUMNS chat_id;
+        DEFINE INDEX IF NOT EXISTS idx_chat_share_owner ON TABLE chat_share COLUMNS owner_id;
+        DEFINE INDEX IF NOT EXISTS idx_chat_share_recipient ON TABLE chat_share COLUMNS recipient_id;
+        DEFINE INDEX IF NOT EXISTS idx_chat_share_unique ON TABLE chat_share COLUMNS chat_id, recipient_id UNIQUE;
 
         DEFINE TABLE IF NOT EXISTS message SCHEMALESS;
         DEFINE INDEX IF NOT EXISTS idx_message_chat ON TABLE message COLUMNS chat_id;

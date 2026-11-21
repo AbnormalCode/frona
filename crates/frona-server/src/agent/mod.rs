@@ -6,6 +6,7 @@ pub mod models;
 pub mod prompt;
 pub mod repository;
 pub mod service;
+pub mod share;
 pub mod signal;
 pub mod skill;
 pub mod task;

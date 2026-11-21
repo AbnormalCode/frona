@@ -133,11 +133,13 @@ pub struct AppState {
     pub user_service: UserService,
     pub user_group_service: crate::auth::group_service::UserGroupService,
     pub agent_service: AgentService,
+    pub agent_share_service: crate::agent::share::service::AgentShareService,
     pub space_service: SpaceService,
     pub call_service: CallService,
     pub usage_service: crate::inference::usage::UsageService,
     pub catalog_sources: frona_model_catalog::sources::CatalogSources,
     pub chat_service: ChatService,
+    pub chat_share_service: crate::chat::share::service::ChatShareService,
     pub contact_service: ContactService,
     pub task_service: TaskService,
     pub broadcast_service: BroadcastService,
@@ -540,13 +542,19 @@ impl AppState {
             config.server.timezone.clone(),
         ));
 
-        let agent_service = AgentService::new(
+        let agent_share_service = crate::agent::share::service::AgentShareService::new(
+            SurrealRepo::new(db.clone()),
+            user_service.clone(),
+        );
+
+        let mut agent_service = AgentService::new(
             SurrealRepo::new(db.clone()),
             &config.cache,
             resource_manager.clone(),
             policy_service.clone(),
             user_service.clone(),
         );
+        agent_service.set_share_service(agent_share_service.clone());
 
         let app_manager = Arc::new(AppManager::new(
             sandbox_manager.clone(),
@@ -670,7 +678,11 @@ impl AppState {
             memory_service.clone(),
             skill_service.clone(),
         );
-        let chat_service = ChatService::new(
+        let chat_share_service = crate::chat::share::service::ChatShareService::new(
+            SurrealRepo::new(db.clone()),
+            user_service.clone(),
+        );
+        let mut chat_service = ChatService::new(
             chat_repo,
             message_repo,
             tool_call_repo,
@@ -685,6 +697,7 @@ impl AppState {
             agent_context_manager,
             agent_prompt_builder,
         );
+        chat_service.set_share_service(chat_share_service.clone());
         let shutdown_token = CancellationToken::new();
         let active_sessions = ActiveSessions::default();
         let execution_registry = ExecutionRegistry::new(broadcast_service.clone());
@@ -790,12 +803,14 @@ impl AppState {
             user_service: user_service.clone(),
             user_group_service: user_group_service.clone(),
             agent_service: agent_service.clone(),
+            agent_share_service,
             space_service,
             call_service: CallService::new(SurrealRepo::new(db.clone())),
             usage_service,
             catalog_sources,
             contact_service,
             chat_service,
+            chat_share_service,
             task_service,
             broadcast_service: broadcast_service.clone(),
             browser_session_manager: Arc::new(BrowserSessionManager::new(config.browser.clone())),

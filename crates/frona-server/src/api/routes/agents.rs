@@ -8,6 +8,8 @@ use crate::inference::tool_loop::InferenceEventKind;
 use axum::extract::{Multipart, Path, State};
 use axum::routing::{get, put};
 use axum::{Json, Router};
+use futures::stream::{self, StreamExt, TryStreamExt};
+use serde::{Deserialize, Serialize};
 
 use super::super::error::ApiError;
 use super::super::middleware::auth::AuthUser;
@@ -48,7 +50,19 @@ pub fn router() -> Router<AppState> {
         )
         .route("/api/agents/{id}/skills", get(list_agent_skills))
         .route("/api/agents/{id}/avatar", put(upload_avatar))
+        .route(
+            "/api/agents/{id}/shares",
+            get(list_agent_shares).post(share_agent),
+        )
+        .route(
+            "/api/agents/{id}/shares/{recipient_id}",
+            put(update_agent_share).delete(unshare_agent),
+        )
 }
+
+/// How many agents `GET /api/agents` builds responses for at once. Each one
+/// builds a tool registry and evaluates a sandbox policy, so this is bounded.
+const AGENT_LIST_CONCURRENCY: usize = 8;
 
 async fn validate_request_sandbox_paths(
     state: &AppState,
@@ -95,15 +109,24 @@ fn resolve_default_prompt(
         .unwrap_or_default()
 }
 
+/// Build the API view of an agent for `requesting_user_id`.
+///
+/// Definition-scoped fields (tools, sandbox policy, default prompt, avatar) are
+/// always resolved under the **agent owner's** identity, so a shared agent is
+/// shown exactly as its owner configured it. When the requester isn't the
+/// owner, `shared_by`/`read_only` are set for the UI.
 async fn to_response(
     state: &AppState,
-    user_id: &str,
-    user_handle: &crate::core::Handle,
+    requesting_user_id: &str,
     agent: Agent,
 ) -> Result<AgentResponse, AppError> {
+    let owner_id = agent.user_id.clone();
+    let owner_handle = state.user_service.handle_of(&owner_id).await?;
+    let is_shared = owner_id != requesting_user_id;
+
     let registry = state
         .tool_manager
-        .build_agent_registry(user_id, &agent, &state.policy_service, None)
+        .build_agent_registry(&owner_id, &agent, &state.policy_service, None)
         .await;
     let tools: Vec<String> = registry
         .definitions()
@@ -113,15 +136,25 @@ async fn to_response(
     let sandbox_policy = state
         .policy_service
         .evaluate_sandbox_policy(
-            crate::policy::service::SandboxPrincipalRef::agent(user_id, user_handle, &agent.handle),
+            crate::policy::service::SandboxPrincipalRef::agent(
+                &owner_id,
+                &owner_handle,
+                &agent.handle,
+            ),
             false,
         )
         .await?
         .as_ref()
         .clone();
     let agent_id = agent.id.clone();
+    let agent_handle = agent.handle.clone();
     let mut response = AgentResponse::from_agent(agent, tools, sandbox_policy);
     response.model = resolve_model(state, &response.model_group);
+    response.default_prompt = resolve_default_prompt(state, &owner_handle, &agent_handle);
+    if is_shared {
+        response.is_shared = true;
+        response.shared_by = Some(owner_handle.to_string());
+    }
     if let Some(value) = response.identity.get("avatar")
         && !value.is_empty()
     {
@@ -133,7 +166,7 @@ async fn to_response(
                 .sign_with_expiry_by_user_id(
                     &format!("agent:{agent_id}"),
                     value,
-                    user_id,
+                    &owner_id,
                     crate::credential::presign::PresignService::LONG_TERM_EXPIRY_SECS,
                 )
                 .await
@@ -159,7 +192,7 @@ async fn create_agent(
     }
 
     let handle = agent.handle.clone();
-    let mut response = to_response(&state, &auth.user_id, &auth.handle, agent).await?;
+    let mut response = to_response(&state, &auth.user_id, agent).await?;
     response.default_prompt = resolve_default_prompt(&state, &auth.handle, &handle);
     Ok(Json(response))
 }
@@ -185,16 +218,42 @@ async fn list_agents(
         })
         .collect();
 
-    let mut responses = Vec::new();
-    for agent in agents {
-        let (id, handle) = (agent.id.clone(), agent.handle.clone());
-        let mut response = to_response(&state, &auth.user_id, &auth.handle, agent).await?;
+    // Agents shared with this user (use-only, read-only view). Backing agents
+    // that have since been deleted are skipped.
+    let shares = state
+        .agent_share_service
+        .list_shared_with(&auth.user_id)
+        .await?;
+    let shared_agents: Vec<Agent> = stream::iter(shares)
+        .map(|share| {
+            let state = &state;
+            async move { state.agent_service.find_by_id(&share.agent_id).await }
+        })
+        .buffered(AGENT_LIST_CONCURRENCY)
+        .try_collect::<Vec<_>>()
+        .await?
+        .into_iter()
+        .flatten()
+        .collect();
 
-        if let Some(&count) = count_map.get(id.as_str()) {
+    // `to_response` is expensive per agent — it builds the tool registry,
+    // evaluates the sandbox policy and reads the default prompt from disk.
+    // Run a bounded number concurrently instead of strictly one at a time;
+    // `buffered` preserves order, so owned agents still precede shared ones.
+    let mut responses: Vec<AgentResponse> = stream::iter(agents.into_iter().chain(shared_agents))
+        .map(|agent| {
+            let state = &state;
+            let user_id = auth.user_id.as_str();
+            async move { to_response(state, user_id, agent).await }
+        })
+        .buffered(AGENT_LIST_CONCURRENCY)
+        .try_collect()
+        .await?;
+
+    for response in &mut responses {
+        if let Some(&count) = count_map.get(response.id.as_str()) {
             response.chat_count = count;
         }
-        response.default_prompt = resolve_default_prompt(&state, &auth.handle, &handle);
-        responses.push(response);
     }
 
     Ok(Json(responses))
@@ -205,10 +264,13 @@ async fn get_agent(
     State(state): State<AppState>,
     Path(id): Path<String>,
 ) -> Result<Json<AgentResponse>, ApiError> {
-    let agent = state.agent_service.get(&auth.user_id, &id).await?;
-    let handle = agent.handle.clone();
-    let mut response = to_response(&state, &auth.user_id, &auth.handle, agent).await?;
-    response.default_prompt = resolve_default_prompt(&state, &auth.handle, &handle);
+    // Owner or shared-recipient may view; `get_accessible` returns Forbidden
+    // otherwise. Editing endpoints stay owner-only.
+    let (agent, _access) = state
+        .agent_service
+        .get_accessible(&auth.user_id, &id)
+        .await?;
+    let response = to_response(&state, &auth.user_id, agent).await?;
     Ok(Json(response))
 }
 
@@ -227,7 +289,7 @@ async fn update_agent(
     }
 
     let handle = agent.handle.clone();
-    let mut response = to_response(&state, &auth.user_id, &auth.handle, agent).await?;
+    let mut response = to_response(&state, &auth.user_id, agent).await?;
     response.default_prompt = resolve_default_prompt(&state, &auth.handle, &handle);
 
     state.broadcast_service.send(BroadcastEvent {
@@ -258,15 +320,141 @@ async fn delete_agent(
     Ok(())
 }
 
+// ---------------------------------------------------------------------------
+// Agent sharing (use-only, per recipient)
+// ---------------------------------------------------------------------------
+
+#[derive(Deserialize)]
+struct ShareAgentRequest {
+    /// Recipient username/handle or email.
+    recipient: String,
+    /// Opt-in: let the recipient's runs use this agent's owner-granted
+    /// credentials. Defaults to false.
+    #[serde(default)]
+    delegate_credentials: bool,
+}
+
+#[derive(Deserialize)]
+struct UpdateShareRequest {
+    delegate_credentials: bool,
+}
+
+#[derive(Serialize)]
+struct AgentShareResponse {
+    recipient_id: String,
+    recipient_handle: String,
+    recipient_name: String,
+    /// Access level ("use" today).
+    level: String,
+    /// Whether the recipient's runs may use the owner's agent credentials.
+    delegate_credentials: bool,
+    created_at: chrono::DateTime<chrono::Utc>,
+}
+
+async fn build_share_responses(
+    state: &AppState,
+    shares: Vec<crate::agent::share::models::AgentShare>,
+) -> Vec<AgentShareResponse> {
+    let mut out = Vec::with_capacity(shares.len());
+    for s in shares {
+        // Resolve recipient display info; fall back to the id if the user row
+        // has since vanished.
+        let (handle, name) = match state.user_service.find_by_id(&s.recipient_id).await {
+            Ok(Some(u)) => (u.handle.to_string(), u.name),
+            _ => (s.recipient_id.clone(), String::new()),
+        };
+        out.push(AgentShareResponse {
+            recipient_id: s.recipient_id,
+            recipient_handle: handle,
+            recipient_name: name,
+            level: "use".to_string(),
+            delegate_credentials: s.delegate_credentials,
+            created_at: s.created_at,
+        });
+    }
+    out
+}
+
+/// `GET /api/agents/{id}/shares` — who this agent is shared with (owner only).
+async fn list_agent_shares(
+    auth: AuthUser,
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> Result<Json<Vec<AgentShareResponse>>, ApiError> {
+    // Owner-only: `get` returns Forbidden for non-owners.
+    let _ = state.agent_service.get(&auth.user_id, &id).await?;
+    let shares = state.agent_share_service.list_for_agent(&id).await?;
+    Ok(Json(build_share_responses(&state, shares).await))
+}
+
+/// `POST /api/agents/{id}/shares` — grant a user use-only access (owner only).
+async fn share_agent(
+    auth: AuthUser,
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    Json(req): Json<ShareAgentRequest>,
+) -> Result<Json<Vec<AgentShareResponse>>, ApiError> {
+    let _ = state.agent_service.get(&auth.user_id, &id).await?;
+    let share = state
+        .agent_share_service
+        .share(&auth.user_id, &id, &req.recipient)
+        .await?;
+    if req.delegate_credentials {
+        state
+            .agent_share_service
+            .set_delegation(&id, &share.recipient_id, true)
+            .await?;
+    }
+    let shares = state.agent_share_service.list_for_agent(&id).await?;
+    Ok(Json(build_share_responses(&state, shares).await))
+}
+
+/// `PUT /api/agents/{id}/shares/{recipient_id}` — toggle credential delegation
+/// for an existing share (owner only).
+async fn update_agent_share(
+    auth: AuthUser,
+    State(state): State<AppState>,
+    Path((id, recipient_id)): Path<(String, String)>,
+    Json(req): Json<UpdateShareRequest>,
+) -> Result<Json<Vec<AgentShareResponse>>, ApiError> {
+    let _ = state.agent_service.get(&auth.user_id, &id).await?;
+    state
+        .agent_share_service
+        .set_delegation(&id, &recipient_id, req.delegate_credentials)
+        .await?;
+    let shares = state.agent_share_service.list_for_agent(&id).await?;
+    Ok(Json(build_share_responses(&state, shares).await))
+}
+
+/// `DELETE /api/agents/{id}/shares/{recipient_id}` — revoke access (owner only).
+async fn unshare_agent(
+    auth: AuthUser,
+    State(state): State<AppState>,
+    Path((id, recipient_id)): Path<(String, String)>,
+) -> Result<Json<Vec<AgentShareResponse>>, ApiError> {
+    let _ = state.agent_service.get(&auth.user_id, &id).await?;
+    state
+        .agent_share_service
+        .unshare(&id, &recipient_id)
+        .await?;
+    let shares = state.agent_share_service.list_for_agent(&id).await?;
+    Ok(Json(build_share_responses(&state, shares).await))
+}
+
 async fn list_agent_skills(
     auth: AuthUser,
     State(state): State<AppState>,
     Path(id): Path<String>,
 ) -> Result<Json<Vec<crate::agent::skill::service::SkillListItem>>, ApiError> {
-    let agent = state.agent_service.get(&auth.user_id, &id).await?;
+    // Viewable by owner or shared-recipient; skills resolve under the owner.
+    let (agent, _access) = state
+        .agent_service
+        .get_accessible(&auth.user_id, &id)
+        .await?;
+    let owner_handle = state.user_service.handle_of(&agent.user_id).await?;
     let skills = state
         .skill_service
-        .list(&auth.handle, &agent.handle, None)
+        .list(&owner_handle, &agent.handle, None)
         .await;
     let items = skills
         .into_iter()

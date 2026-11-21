@@ -1,9 +1,11 @@
 pub mod agent_context_snapshots;
+pub mod agent_shares;
 pub mod agents;
 pub mod apps;
 pub mod basic_memory;
 pub mod calls;
 pub mod channels;
+pub mod chat_shares;
 pub mod chat_summaries;
 pub mod chats;
 pub mod contacts;

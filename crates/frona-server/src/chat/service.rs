@@ -69,6 +69,10 @@ pub struct ChatService {
     broadcast: crate::chat::broadcast::BroadcastService,
     presign: crate::credential::presign::PresignService,
     usage_service: crate::inference::usage::UsageService,
+    /// Set once at startup via [`ChatService::set_share_service`]. Optional so
+    /// test constructions (and the two services' construction order) stay
+    /// simple; when absent, access is owner-only.
+    share_service: Option<crate::chat::share::service::ChatShareService>,
     compactor: super::compactor::ChatCompactor,
 }
 
@@ -112,8 +116,18 @@ impl ChatService {
             broadcast,
             presign,
             usage_service,
+            share_service: None,
             compactor,
         }
+    }
+
+    /// Attach the share service so [`ChatService::get_accessible`] can honor
+    /// read-only shares. Call once at startup before the service is cloned.
+    pub fn set_share_service(
+        &mut self,
+        share_service: crate::chat::share::service::ChatShareService,
+    ) {
+        self.share_service = Some(share_service);
     }
 
     pub async fn build_system_prompt(
@@ -185,14 +199,12 @@ impl ChatService {
         req: CreateChatRequest,
     ) -> Result<ChatResponse, AppError> {
         // Fail eagerly on bad `agent_id` - first /messages/stream would silently 404.
-        let agent = self
+        // Access-checked: the user must own the agent OR have it shared with
+        // them (use-only). `get_accessible` returns Forbidden/NotFound otherwise.
+        let (_agent, _access) = self
             .agent_service
-            .find_by_id(&req.agent_id)
-            .await?
-            .ok_or_else(|| AppError::NotFound(format!("Agent '{}' not found", req.agent_id)))?;
-        if agent.user_id != user_id {
-            return Err(AppError::Forbidden("Not your agent".into()));
-        }
+            .get_accessible(user_id, &req.agent_id)
+            .await?;
 
         let now = chrono::Utc::now();
         let chat = Chat {
@@ -247,9 +259,67 @@ impl ChatService {
         Ok(chat)
     }
 
+    /// Resolve a chat the user is allowed to *view* - either they own it or
+    /// it was shared with them, read-only. Returns `Forbidden` otherwise. Use
+    /// this for read paths; keep [`ChatService::get_chat`] (owner-only) for
+    /// mutations (sending messages, archiving, deleting, resolving HITL
+    /// prompts, etc).
+    pub async fn get_accessible(
+        &self,
+        user_id: &str,
+        chat_id: &str,
+    ) -> Result<(Chat, bool), AppError> {
+        let chat = self
+            .chat_repo
+            .find_by_id(chat_id)
+            .await?
+            .ok_or_else(|| AppError::NotFound("Chat not found".into()))?;
+
+        if chat.user_id == user_id {
+            return Ok((chat, true));
+        }
+
+        if let Some(share) = &self.share_service
+            && share.is_shared_with(chat_id, user_id).await?
+        {
+            return Ok((chat, false));
+        }
+
+        Err(AppError::Forbidden("Not your chat".into()))
+    }
+
+    /// Chats shared with `user_id` (read-only), as enriched `ChatResponse`s
+    /// with `is_shared`/`shared_by` set. Empty when no share service is
+    /// attached. Backing chats that have since been deleted are skipped.
+    pub async fn shared_chat_responses(
+        &self,
+        user_id: &str,
+    ) -> Result<Vec<ChatResponse>, AppError> {
+        let Some(share_service) = &self.share_service else {
+            return Ok(Vec::new());
+        };
+        let shares = share_service.list_shared_with(user_id).await?;
+        let mut responses = Vec::with_capacity(shares.len());
+        for share in shares {
+            let Some(chat) = self.chat_repo.find_by_id(&share.chat_id).await? else {
+                continue;
+            };
+            let shared_by = self.user_service.handle_of(&chat.user_id).await.ok();
+            let mut response: ChatResponse = chat.into();
+            response.is_shared = true;
+            response.shared_by = shared_by.map(|h| h.to_string());
+            responses.push(response);
+        }
+        Ok(responses)
+    }
+
+    /// Owned chats first, then chats shared with `user_id` (read-only) -
+    /// mirrors `AgentService::list`'s owned-before-shared ordering.
     pub async fn list_chats(&self, user_id: &str) -> Result<Vec<ChatResponse>, AppError> {
         let chats = self.chat_repo.find_by_user_id(user_id).await?;
-        Ok(chats.into_iter().map(Into::into).collect())
+        let mut responses: Vec<ChatResponse> = chats.into_iter().map(Into::into).collect();
+        responses.extend(self.shared_chat_responses(user_id).await?);
+        Ok(responses)
     }
 
     pub async fn update_chat(
@@ -760,7 +830,7 @@ impl ChatService {
         user_id: &str,
         chat_id: &str,
     ) -> Result<Vec<MessageResponse>, AppError> {
-        self.get_chat(user_id, chat_id).await?;
+        self.get_accessible(user_id, chat_id).await?;
 
         let messages = self.message_repo.find_by_chat_id(chat_id).await?;
         let tool_calls = self.get_tool_calls(chat_id).await.unwrap_or_default();
@@ -796,7 +866,7 @@ impl ChatService {
         after: Option<chrono::DateTime<chrono::Utc>>,
         limit: u32,
     ) -> Result<PaginatedMessagesResponse, AppError> {
-        self.get_chat(user_id, chat_id).await?;
+        self.get_accessible(user_id, chat_id).await?;
 
         let fetch_limit = limit + 1;
         let mut messages = self

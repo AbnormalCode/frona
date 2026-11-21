@@ -1001,6 +1001,24 @@ pub async fn seed_tool_turn(db: &Surreal<Db>, ctx: &InferenceContext, message_id
 }
 
 async fn build_test_chat_service(message_id: Option<&str>) -> frona::chat::service::ChatService {
+    build_test_chat_service_with_db(message_id).await.0
+}
+
+/// Same as [`test_chat_service`] but also returns the backing DB handle, for
+/// tests that need to seed rows (chats, shares, ...) directly.
+pub async fn test_chat_service_with_db() -> (
+    frona::chat::service::ChatService,
+    surrealdb::Surreal<surrealdb::engine::local::Db>,
+) {
+    build_test_chat_service_with_db(None).await
+}
+
+async fn build_test_chat_service_with_db(
+    message_id: Option<&str>,
+) -> (
+    frona::chat::service::ChatService,
+    surrealdb::Surreal<surrealdb::engine::local::Db>,
+) {
     use frona::db::repo::generic::SurrealRepo;
     use surrealdb::{Surreal, engine::local::Mem};
 
@@ -1069,7 +1087,7 @@ async fn build_test_chat_service(message_id: Option<&str>) -> frona::chat::servi
         empty_memory_service(),
         skill_service,
     );
-    frona::chat::service::ChatService::new(
+    let service = frona::chat::service::ChatService::new(
         SurrealRepo::new(db.clone()),
         SurrealRepo::new(db.clone()),
         SurrealRepo::new(db.clone()),
@@ -1083,7 +1101,8 @@ async fn build_test_chat_service(message_id: Option<&str>) -> frona::chat::servi
         usage_service,
         empty_agent_context_manager(&db),
         agent_prompt_builder,
-    )
+    );
+    (service, db)
 }
 
 /// Build a `BasicMemoryService` for tests that construct a `Harness` directly
