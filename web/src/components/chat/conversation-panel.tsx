@@ -41,8 +41,8 @@ export function ChatView({
   const isReadOnly = useMemo(() => {
     if (!currentChatId) return false;
     const found =
-      standaloneChats.find((c) => c.id === currentChatId) ??
-      spaces.flatMap((s) => s.chats).find((c) => c.id === currentChatId);
+      (standaloneChats ?? []).find((c) => c.id === currentChatId) ??
+      (spaces ?? []).flatMap((s) => s.chats).find((c) => c.id === currentChatId);
     return found?.is_shared ?? false;
   }, [standaloneChats, spaces, currentChatId]);
 
