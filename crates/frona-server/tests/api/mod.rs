@@ -315,6 +315,11 @@ async fn upload_test_file(
     body_json(resp).await
 }
 
+fn with_connect_info_from(req: &mut Request<Body>, last_octet: u8) {
+    req.extensions_mut()
+        .insert(ConnectInfo(SocketAddr::from(([10, 0, 0, last_octet], 0))));
+}
+
 fn with_connect_info(req: &mut Request<Body>) {
     req.extensions_mut()
         .insert(ConnectInfo(SocketAddr::from(([127, 0, 0, 1], 0))));

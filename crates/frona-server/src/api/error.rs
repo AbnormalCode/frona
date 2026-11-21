@@ -1,6 +1,6 @@
 use crate::core::error::{AppError, AuthErrorCode};
 use axum::Json;
-use axum::http::StatusCode;
+use axum::http::{StatusCode, header};
 use axum::response::{IntoResponse, Response};
 use serde_json::json;
 
@@ -36,6 +36,7 @@ impl ApiError {
             AppError::Auth { message, code } => {
                 let status = match code {
                     AuthErrorCode::AccountDeactivated => StatusCode::FORBIDDEN,
+                    AuthErrorCode::AccountLocked { .. } => StatusCode::TOO_MANY_REQUESTS,
                     _ => StatusCode::UNAUTHORIZED,
                 };
                 (status, message.clone())
@@ -91,6 +92,20 @@ impl ApiError {
 
 impl IntoResponse for ApiError {
     fn into_response(self) -> Response {
+        // Lockout carries a deadline, so it answers with `Retry-After` and a
+        // machine-readable code rather than the plain (status, body) path.
+        if let AppError::Auth {
+            message,
+            code: code @ AuthErrorCode::AccountLocked { retry_after_secs },
+        } = &self.0
+        {
+            return (
+                StatusCode::TOO_MANY_REQUESTS,
+                [(header::RETRY_AFTER, retry_after_secs.to_string())],
+                Json(json!({ "error": message, "code": code.as_str() })),
+            )
+                .into_response();
+        }
         let PublicError { status, message } = self.public_error();
         let mut message_error = crate::chat::message::error::MessageError::from(&self.0);
         message_error.message = message.clone();

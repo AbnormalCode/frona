@@ -1,4 +1,6 @@
-use axum::extract::{Path, State};
+use std::net::SocketAddr;
+
+use axum::extract::{ConnectInfo, Path, State};
 use axum::http::StatusCode;
 use axum::http::header::SET_COOKIE;
 use axum::routing::{delete, get, post, put};
@@ -12,6 +14,7 @@ use crate::api::cookie::{
     make_clear_refresh_cookie, make_clear_sso_csrf_cookie, make_refresh_cookie,
     make_sso_csrf_cookie,
 };
+use crate::auth::lockout::{LockStatus, LoginAttemptTracker};
 use crate::auth::models::{
     AuthResponse, ChangePasswordRequest, LoginRequest, RegisterRequest, UpdateHandleRequest,
     UpdateProfileRequest, UserInfo,
@@ -133,6 +136,7 @@ async fn register(
 
 async fn login(
     State(state): State<AppState>,
+    ConnectInfo(client): ConnectInfo<SocketAddr>,
     Json(req): Json<LoginRequest>,
 ) -> Result<
     (
@@ -146,11 +150,28 @@ async fn login(
     }
 
     let identifier = req.identifier.clone();
+    // Log the normalized form so the same account reads as one identity across
+    // entries, and so log scrapes can't be fragmented by casing.
+    let logged_id = LoginAttemptTracker::normalize(&identifier);
+    let client_ip = client.ip();
 
-    if state.login_tracker.is_locked(&identifier).await {
+    if let LockStatus::Locked { retry_after } = state.login_tracker.check(&identifier).await {
+        // Round up: a sub-second remainder should still ask for 1, never 0.
+        let retry_after_secs = retry_after.as_secs().saturating_add(1);
+        tracing::warn!(
+            identifier = %logged_id,
+            client_ip = %client_ip,
+            retry_after_secs,
+            "Login refused: identifier is locked out"
+        );
+        crate::core::metrics::record_login_failure("locked_out");
+        let minutes = retry_after_secs.div_ceil(60);
         return Err(ApiError(AppError::Auth {
-            message: "Too many failed attempts. Please try again later.".into(),
-            code: AuthErrorCode::InvalidCredentials,
+            message: format!(
+                "Too many failed attempts. Try again in {minutes} minute{}.",
+                if minutes == 1 { "" } else { "s" }
+            ),
+            code: AuthErrorCode::AccountLocked { retry_after_secs },
         }));
     }
 
@@ -171,14 +192,31 @@ async fn login(
             v
         }
         Err(e) => {
+            // Only a genuine credential rejection counts toward lockout. An
+            // `Internal` from token minting, or a deactivated account, is not a
+            // guess at a password and must not consume the user's budget.
             if matches!(
-                e,
+                &e,
                 AppError::Auth {
                     code: AuthErrorCode::InvalidCredentials,
                     ..
                 }
             ) {
-                state.login_tracker.record_failure(&identifier).await;
+                let now_locked = state.login_tracker.record_failure(&identifier).await;
+                crate::core::metrics::record_login_failure("invalid_credentials");
+                tracing::warn!(
+                    identifier = %logged_id,
+                    client_ip = %client_ip,
+                    "Failed login attempt"
+                );
+                if now_locked {
+                    crate::core::metrics::record_account_lockout();
+                    tracing::warn!(
+                        identifier = %logged_id,
+                        client_ip = %client_ip,
+                        "Identifier locked out after repeated failed logins"
+                    );
+                }
             }
             return Err(ApiError(e));
         }
