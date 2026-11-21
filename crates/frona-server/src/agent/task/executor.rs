@@ -523,7 +523,9 @@ impl TaskExecutor {
                 can_cancel: !matches!(&task.kind, TaskKind::CronRun { .. }),
             },
         );
-        self.execute_task(task, cancel_token).await
+        // Recovery can await tasks directly. Keep the execution state off the
+        // recovery caller's future while model observers perform database work.
+        Box::pin(self.execute_task(task, cancel_token)).await
     }
 
     /// A task paused on a human request: flag it as waiting, tell the user
