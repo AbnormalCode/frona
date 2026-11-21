@@ -5,6 +5,7 @@ use frona_harness::config::ModelGroupConfig;
 pub const SENSITIVE_PATHS: &[&[&str]] = &[
     &["auth", "encryption_secret"],
     &["sso", "client_secret"],
+    &["mail", "smtp_password"],
     &["push", "vapid_private_key"],
     &["voice", "twilio_account_sid"],
     &["voice", "twilio_auth_token"],

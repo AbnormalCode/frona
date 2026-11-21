@@ -20,6 +20,7 @@ use crate::auth::AuthService;
 use crate::auth::jwt::JwtService;
 use crate::auth::lockout::LoginAttemptTracker;
 use crate::auth::oauth::service::OAuthService;
+use crate::auth::password_reset::service::PasswordResetService;
 use crate::auth::token::service::TokenService;
 use crate::call::CallService;
 use crate::chat::broadcast::BroadcastService;
@@ -31,6 +32,7 @@ use crate::credential::presign::PresignService;
 use crate::credential::vault::service::VaultService;
 use crate::db::repo::push_subscriptions::SurrealPushSubscriptionRepo;
 use crate::inference::config::ModelRegistryConfig;
+use crate::mail::MailService;
 use crate::memory::basic::BasicMemoryService;
 use crate::memory::pkm::PkmService;
 use crate::notification::push_repository::PushSubscriptionRepository;
@@ -166,6 +168,8 @@ pub struct AppState {
     pub share_service: crate::credential::share::service::ShareService,
     pub token_service: TokenService,
     pub oauth_service: Option<OAuthService>,
+    pub password_reset_service: PasswordResetService,
+    pub mail_service: Option<MailService>,
     pub login_tracker: LoginAttemptTracker,
     pub metrics_handle: PrometheusHandle,
     pub shutdown_token: CancellationToken,
@@ -421,6 +425,31 @@ impl AppState {
             config.auth.access_token_expiry_secs,
             config.auth.refresh_token_expiry_secs,
         );
+
+        let password_reset_repo: SurrealRepo<
+            crate::auth::password_reset::models::PasswordResetToken,
+        > = SurrealRepo::new(db.clone());
+        let password_reset_service = PasswordResetService::new(
+            Arc::new(password_reset_repo),
+            config.auth.password_reset_expiry_minutes,
+        );
+
+        // A bad mail config disables email rather than taking the server down -
+        // everything except password reset works fine without it.
+        let mail_service = match MailService::from_config(&config.mail) {
+            Ok(Some(svc)) => {
+                tracing::info!(host = %config.mail.smtp_host, "Outbound email enabled");
+                Some(svc)
+            }
+            Ok(None) => {
+                tracing::info!("Outbound email disabled (no mail.smtp_host configured)");
+                None
+            }
+            Err(e) => {
+                tracing::error!(error = %e, "Outbound email disabled: invalid mail configuration");
+                None
+            }
+        };
 
         let voice_provider = create_voice_provider(
             &config.voice,
@@ -796,7 +825,12 @@ impl AppState {
             share_service,
             token_service,
             oauth_service,
-            login_tracker: LoginAttemptTracker::new(5, 15),
+            password_reset_service,
+            mail_service,
+            login_tracker: LoginAttemptTracker::new(
+                config.auth.max_login_attempts,
+                config.auth.lockout_minutes,
+            ),
             metrics_handle,
             shutdown_token,
             channel_registry: channel_registry.clone(),

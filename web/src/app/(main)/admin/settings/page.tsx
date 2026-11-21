@@ -15,6 +15,7 @@ import { ModelsSection } from "@/components/settings/sections/models-section";
 import { ServerSection } from "@/components/settings/sections/server-section";
 import { TimezoneSection } from "@/components/settings/sections/timezone-section";
 import { AuthSection } from "@/components/settings/sections/auth-section";
+import { MailSection } from "@/components/settings/sections/mail-section";
 import { SsoSection } from "@/components/settings/sections/sso-section";
 import { BrowserSection } from "@/components/settings/sections/browser-section";
 import { SearchSection } from "@/components/settings/sections/search-section";
@@ -41,6 +42,7 @@ const TABS = [
   { id: "sandbox", label: "Sandbox", saveable: true, divider: false },
   { id: "auth", label: "Authentication", saveable: true, divider: true },
   { id: "sso", label: "Single Sign-On", saveable: true, divider: false },
+  { id: "mail", label: "Email", saveable: true, divider: false },
   { id: "users", label: "Users", saveable: false, divider: false },
   { id: "timezone", label: "Timezone", saveable: true, divider: true },
   { id: "server", label: "Server", saveable: true, divider: false },
@@ -354,6 +356,13 @@ export default function AdminSettingsPage() {
                     <AuthSection
                       auth={config.auth}
                       onChange={(v) => updatePatch("auth", v)}
+                    />
+                  )}
+                  {activeTab === "mail" && (
+                    <MailSection
+                      mail={config.mail}
+                      onChange={(v) => updatePatch("mail", v)}
+                      hasFrontendUrl={!!(config.server.frontend_url || config.server.base_url)}
                     />
                   )}
                   {activeTab === "sso" && (

@@ -39,6 +39,22 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .with_env_filter(EnvFilter::new(&log_filter))
         .init();
 
+    // Subcommands run instead of the server, not alongside it - they need the
+    // database lock the server would otherwise hold.
+    let args: Vec<String> = std::env::args().skip(1).collect();
+    match args.first().map(String::as_str) {
+        None => {}
+        Some("reset-password") => return frona::cli::run_reset_password(&args[1..]).await,
+        Some("--help" | "-h" | "help") => {
+            println!("{}", frona::cli::USAGE);
+            return Ok(());
+        }
+        Some(other) => {
+            eprintln!("Unknown command '{other}'\n\n{}", frona::cli::USAGE);
+            std::process::exit(2);
+        }
+    }
+
     if let Some(revision) = option_env!("FRONA_BUILD_REVISION")
         .filter(|revision| !revision.is_empty() && *revision != "unknown")
     {

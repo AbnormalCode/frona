@@ -13,9 +13,10 @@ use crate::api::cookie::{
     make_sso_csrf_cookie,
 };
 use crate::auth::models::{
-    AuthResponse, LoginRequest, RegisterRequest, UpdateHandleRequest, UpdateProfileRequest,
-    UserInfo,
+    AuthResponse, ChangePasswordRequest, LoginRequest, RegisterRequest, UpdateHandleRequest,
+    UpdateProfileRequest, UserInfo,
 };
+use crate::auth::password_reset::models::{ForgotPasswordRequest, ResetPasswordRequest};
 use crate::auth::token::models::CreatePatRequest;
 use crate::core::error::{AppError, AuthErrorCode};
 
@@ -38,9 +39,24 @@ pub fn router() -> Router<AppState> {
         .finish()
         .unwrap();
 
+    // Each forgot-password request can make the server send an email to an
+    // address the caller does not own, so it gets a far smaller budget than
+    // the other auth routes: a burst of 3, then one more every 30 seconds.
+    let forgot_limit = GovernorConfigBuilder::default()
+        .per_second(30)
+        .burst_size(3)
+        .key_extractor(SmartIpKeyExtractor)
+        .finish()
+        .unwrap();
+
+    let rate_limited_forgot = Router::new()
+        .route("/api/auth/forgot-password", post(forgot_password))
+        .layer(GovernorLayer::new(forgot_limit));
+
     let rate_limited_auth = Router::new()
         .route("/api/auth/login", post(login))
         .route("/api/auth/register", post(register))
+        .route("/api/auth/reset-password", post(reset_password))
         .layer(GovernorLayer::new(auth_limit));
 
     let rate_limited_refresh = Router::new()
@@ -49,10 +65,12 @@ pub fn router() -> Router<AppState> {
 
     Router::new()
         .merge(rate_limited_auth)
+        .merge(rate_limited_forgot)
         .merge(rate_limited_refresh)
         .route("/api/auth/me", get(me))
         .route("/api/auth/logout", post(logout))
         .route("/api/auth/handle", put(change_handle))
+        .route("/api/auth/password", put(change_password))
         .route("/api/auth/profile", put(update_profile))
         .route("/api/auth/tokens", post(create_pat).get(list_pats))
         .route("/api/auth/tokens/{id}", delete(delete_pat))
@@ -181,6 +199,86 @@ async fn login(
     Ok(([(SET_COOKIE, cookie)], Json(response)))
 }
 
+/// Always answers 202, whether or not the address is registered — the reply
+/// must not tell an enumerator which addresses have accounts. Delivery happens
+/// on a detached task so the response time doesn't leak it either.
+async fn forgot_password(
+    State(state): State<AppState>,
+    Json(req): Json<ForgotPasswordRequest>,
+) -> Result<StatusCode, ApiError> {
+    if state.config.sso.disable_local_auth {
+        return Err(ApiError(AppError::Validation("SSO login required".into())));
+    }
+    // Server-level configuration, not account-level: refusing here reveals
+    // nothing about any particular user.
+    if state.mail_service.is_none() {
+        return Err(ApiError(AppError::Validation(
+            "Password reset is not available — this server has no outbound email configured."
+                .into(),
+        )));
+    }
+
+    let frontend_url = state.config.server.public_frontend_url();
+    let expiry_minutes = state.config.auth.password_reset_expiry_minutes;
+    let email = req.email;
+    // Bounded: past the cap the request is still acknowledged, so the response
+    // reveals nothing, but no more mail is queued behind a slow server.
+    let Some(slot) = state.password_reset_service.try_reserve_mail_slot() else {
+        tracing::warn!("Password reset email skipped: too many already in flight");
+        return Ok(StatusCode::ACCEPTED);
+    };
+    let bg = state.clone();
+    tokio::spawn(async move {
+        let _slot = slot;
+        let Some(mail) = bg.mail_service.as_ref() else {
+            return;
+        };
+        if let Err(e) = bg
+            .password_reset_service
+            .send_reset_email(
+                &bg.user_service,
+                mail,
+                &frontend_url,
+                &email,
+                expiry_minutes,
+            )
+            .await
+        {
+            tracing::warn!(error = %e, "Password reset email failed");
+        }
+    });
+
+    Ok(StatusCode::ACCEPTED)
+}
+
+async fn reset_password(
+    State(state): State<AppState>,
+    Json(req): Json<ResetPasswordRequest>,
+) -> Result<StatusCode, ApiError> {
+    if state.config.sso.disable_local_auth {
+        return Err(ApiError(AppError::Validation("SSO login required".into())));
+    }
+
+    // Validate the new password before burning the token, so a rejected
+    // password doesn't cost the user their one-shot link.
+    crate::auth::AuthService::validate_password(&req.new_password)?;
+
+    let user_id = state.password_reset_service.consume(&req.token).await?;
+    let user = state
+        .auth_service
+        .set_password(&state.user_service, &user_id, &req.new_password)
+        .await?;
+
+    // Whoever holds the old password — including whoever the user is resetting
+    // because of — loses every live session.
+    state.token_service.revoke_all_for_user(&user_id).await?;
+    state.login_tracker.clear(&user.email).await;
+    state.login_tracker.clear(user.handle.as_str()).await;
+
+    tracing::info!(user_id = %user_id, "Password reset completed");
+    Ok(StatusCode::NO_CONTENT)
+}
+
 async fn me(auth: AuthUser, State(state): State<AppState>) -> Result<Json<UserInfo>, ApiError> {
     let user = state
         .user_service
@@ -219,6 +317,63 @@ async fn change_handle(
             req,
         )
         .await?;
+
+    let secure = state
+        .config
+        .server
+        .base_url
+        .as_deref()
+        .is_some_and(|u| u.starts_with("https://"));
+    let cookie = make_refresh_cookie(
+        &refresh_jwt,
+        state.token_service.refresh_expiry_secs(),
+        secure,
+    );
+
+    Ok(([(SET_COOKIE, cookie)], Json(response)))
+}
+
+async fn change_password(
+    auth: AuthUser,
+    State(state): State<AppState>,
+    Json(req): Json<ChangePasswordRequest>,
+) -> Result<
+    (
+        [(axum::http::HeaderName, axum::http::HeaderValue); 1],
+        Json<AuthResponse>,
+    ),
+    ApiError,
+> {
+    // A leaked PAT must not be upgradable into full account takeover.
+    if auth.is_pat() {
+        return Err(ApiError(AppError::Forbidden(
+            "PATs cannot change the account password".into(),
+        )));
+    }
+
+    let (response, refresh_jwt) = state
+        .auth_service
+        .change_password(
+            &state.user_service,
+            &state.keypair_service,
+            &state.token_service,
+            &state.policy_service,
+            &auth.user_id,
+            req,
+        )
+        .await?;
+
+    // The password just changed, so any lockout from the forgotten one is
+    // stale, and any reset link requested beforehand must stop working.
+    state.login_tracker.clear(&response.user.email).await;
+    state
+        .login_tracker
+        .clear(response.user.handle.as_str())
+        .await;
+    state
+        .password_reset_service
+        .invalidate_for_user(&auth.user_id)
+        .await;
 
     let secure = state
         .config
@@ -388,6 +543,9 @@ struct SsoStatus {
 struct AuthConfigResponse {
     sso: SsoStatus,
     allow_registration: bool,
+    /// Drives whether the login page offers a "Forgot password?" link - the
+    /// flow is unusable without outbound email.
+    password_reset_enabled: bool,
 }
 
 async fn auth_config(State(state): State<AppState>) -> Json<AuthConfigResponse> {
@@ -397,6 +555,8 @@ async fn auth_config(State(state): State<AppState>) -> Json<AuthConfigResponse> 
             disable_local_auth: state.config.sso.disable_local_auth,
         },
         allow_registration: state.config.auth.allow_registration,
+        password_reset_enabled: state.mail_service.is_some()
+            && !state.config.sso.disable_local_auth,
     })
 }
 

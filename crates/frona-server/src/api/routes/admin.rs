@@ -1,6 +1,6 @@
 use axum::extract::{Path, Query, State};
 use axum::http::StatusCode;
-use axum::routing::{get, patch, post};
+use axum::routing::{get, patch, post, put};
 use axum::{Json, Router};
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
@@ -23,6 +23,8 @@ pub fn router() -> Router<AppState> {
         )
         .route("/api/admin/users/{id}/deactivate", post(deactivate_user))
         .route("/api/admin/users/{id}/reactivate", post(reactivate_user))
+        .route("/api/admin/users/{id}/password", put(set_user_password))
+        .route("/api/admin/users/{id}/unlock", post(unlock_user))
         .route("/api/admin/groups", get(list_groups))
 }
 
@@ -93,6 +95,11 @@ struct CreateUserRequest {
 #[derive(Deserialize)]
 struct PatchUserRequest {
     groups: Vec<String>,
+}
+
+#[derive(Deserialize)]
+struct SetPasswordRequest {
+    password: String,
 }
 
 async fn load_caller(state: &AppState, auth: &AuthUser) -> Result<User, AppError> {
@@ -237,11 +244,7 @@ async fn deactivate_user(
         .deactivate(&target_id)
         .await
         .map_err(translate_invariant_violation)?;
-    let _ = state
-        .token_service
-        .repo()
-        .delete_by_user_id(&target_id)
-        .await;
+    state.token_service.revoke_all_for_user(&target_id).await?;
     state.user_service.ensure_admin_invariant().await?;
 
     Ok(Json(AdminUserListItem::from(updated)))
@@ -264,6 +267,84 @@ async fn reactivate_user(
 
     let updated = state.user_service.reactivate(&target_id).await?;
     Ok(Json(AdminUserListItem::from(updated)))
+}
+
+/// Both lockout buckets for a user: an account can be locked by whichever
+/// identifier the failed attempts used, and the two are tracked separately.
+async fn clear_lockout(state: &AppState, user: &User) {
+    state.login_tracker.clear(&user.email).await;
+    state.login_tracker.clear(user.handle.as_str()).await;
+}
+
+async fn set_user_password(
+    auth: AuthUser,
+    State(state): State<AppState>,
+    Path(target_id): Path<String>,
+    Json(req): Json<SetPasswordRequest>,
+) -> Result<StatusCode, ApiError> {
+    let caller = load_caller(&state, &auth).await?;
+    require(
+        &state,
+        &caller,
+        PolicyAction::ManageUsers {
+            target_user_id: target_id.clone(),
+        },
+    )
+    .await?;
+
+    let target = state
+        .auth_service
+        .set_password(&state.user_service, &target_id, &req.password)
+        .await?;
+
+    // A password the user no longer knows must not leave live sessions behind,
+    // and a reset is pointless if the account stays locked out.
+    state.token_service.revoke_all_for_user(&target_id).await?;
+    clear_lockout(&state, &target).await;
+    state
+        .password_reset_service
+        .invalidate_for_user(&target_id)
+        .await;
+
+    tracing::warn!(
+        actor_id = %caller.id,
+        target_id = %target_id,
+        "Admin reset a user's password"
+    );
+
+    Ok(StatusCode::NO_CONTENT)
+}
+
+async fn unlock_user(
+    auth: AuthUser,
+    State(state): State<AppState>,
+    Path(target_id): Path<String>,
+) -> Result<StatusCode, ApiError> {
+    let caller = load_caller(&state, &auth).await?;
+    require(
+        &state,
+        &caller,
+        PolicyAction::ManageUsers {
+            target_user_id: target_id.clone(),
+        },
+    )
+    .await?;
+
+    let target = state
+        .user_service
+        .find_by_id(&target_id)
+        .await?
+        .ok_or_else(|| AppError::NotFound("User not found".into()))?;
+
+    clear_lockout(&state, &target).await;
+
+    tracing::info!(
+        actor_id = %caller.id,
+        target_id = %target_id,
+        "Admin cleared a login lockout"
+    );
+
+    Ok(StatusCode::NO_CONTENT)
 }
 
 async fn delete_user(

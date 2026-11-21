@@ -39,6 +39,7 @@ export interface SsoStatus {
 export interface AuthConfig {
   sso: SsoStatus;
   allow_registration: boolean;
+  password_reset_enabled: boolean;
 }
 
 export interface SandboxPolicy {

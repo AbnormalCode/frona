@@ -89,6 +89,7 @@ hyper = { version = "1", features = ["full"] }
 hyper-util = { version = "0.1", features = ["client-legacy", "http1", "tokio"] }
 http-body-util = "0.1"
 http = "1"
+lettre = { version = "0.11.22", default-features = false, features = ["smtp-transport", "tokio1-rustls-tls", "builder", "pool"] }
 web-push = "0.11"
 # web-push builds its requests and parses responses with http 0.2; reqwest uses 1.x.
 http02 = { package = "http", version = "0.2" }

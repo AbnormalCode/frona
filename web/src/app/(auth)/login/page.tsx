@@ -72,6 +72,9 @@ function LoginContent() {
   const showPasswordForm = !authConfig?.sso.disable_local_auth;
   const showSsoButton = authConfig?.sso.enabled;
   const showRegisterLink = authConfig?.allow_registration ?? true;
+  // Hidden unless the server can actually send the email - a dead link here is
+  // worse than no link.
+  const showForgotLink = authConfig?.password_reset_enabled ?? false;
 
   return (
     <div className="flex min-h-screen items-center justify-center px-4">
@@ -140,6 +143,16 @@ function LoginContent() {
           >
             Sign in with SSO
           </button>
+        )}
+        {showPasswordForm && showForgotLink && (
+          <p className="text-center text-sm">
+            <Link
+              href="/forgot-password"
+              className="text-text-secondary hover:text-text-primary hover:underline"
+            >
+              Forgot your password?
+            </Link>
+          </p>
         )}
         {showPasswordForm && showRegisterLink && (
           <p className="text-center text-sm text-text-secondary">

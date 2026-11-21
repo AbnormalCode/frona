@@ -179,6 +179,10 @@ pub async fn setup_schema(db: &Surreal<Db>) -> Result<(), surrealdb::Error> {
 
         -- Which notification categories each user wants pushed. Keyed by user id.
         DEFINE TABLE IF NOT EXISTS notification_preferences SCHEMALESS;
+        DEFINE TABLE IF NOT EXISTS password_reset_token SCHEMALESS;
+        DEFINE INDEX IF NOT EXISTS idx_password_reset_hash ON TABLE password_reset_token COLUMNS token_hash UNIQUE;
+        DEFINE INDEX IF NOT EXISTS idx_password_reset_user ON TABLE password_reset_token COLUMNS user_id;
+
         DEFINE TABLE IF NOT EXISTS notification SCHEMALESS;
         DEFINE INDEX IF NOT EXISTS idx_notification_user ON TABLE notification COLUMNS user_id;
 

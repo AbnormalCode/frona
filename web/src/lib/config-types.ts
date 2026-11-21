@@ -38,6 +38,21 @@ export interface AuthConfig {
   refresh_token_expiry_secs: number;
   presign_expiry_secs: number;
   allow_registration: boolean;
+  max_login_attempts: number;
+  lockout_minutes: number;
+  password_reset_expiry_minutes: number;
+}
+
+export type SmtpTls = "starttls" | "implicit" | "none";
+
+export interface MailConfig {
+  smtp_host: string;
+  smtp_port: number;
+  smtp_username: string | null;
+  smtp_password: SensitiveField;
+  tls: SmtpTls;
+  from_address: string;
+  from_name: string;
 }
 
 export interface SsoConfig {
@@ -217,6 +232,7 @@ export interface Config {
   browser: BrowserConfig | null;
   search: SearchConfig;
   voice: VoiceConfig;
+  mail: MailConfig;
   vault: VaultConfig;
   inference: InferenceConfig;
   scheduler: SchedulerConfig;
@@ -277,7 +293,7 @@ function stripRedactedSensitiveFields(obj: unknown, path: string[] = []): unknow
         ["auth", "encryption_secret"], ["sso", "client_secret"],
         ["voice", "twilio_account_sid"], ["voice", "twilio_auth_token"],
         ["vault", "onepassword_service_account_token"], ["vault", "bitwarden_client_secret"],
-        ["vault", "bitwarden_master_password"], ["vault", "hashicorp_token"], ["vault", "keepass_password"],
+        ["vault", "bitwarden_master_password"], ["vault", "hashicorp_token"], ["vault", "keepass_password"], ["mail", "smtp_password"],
       ].some(([section, field]) => nextPath[0] === section && key === field));
     if (sensitive && typeof value === "object" && value !== null && "is_set" in value
       && Object.keys(value).length === 1 && typeof value.is_set === "boolean") continue;

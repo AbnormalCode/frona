@@ -16,6 +16,7 @@ pub mod message_context;
 pub mod messages;
 pub mod notifications;
 pub mod oauth;
+pub mod password_reset_tokens;
 pub mod pkm;
 pub mod policies;
 pub mod push_subscriptions;
