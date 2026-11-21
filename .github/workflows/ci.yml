@@ -24,10 +24,12 @@ jobs:
   backend-shard:
     name: Backend shard ${{ matrix.shard }}/3
     runs-on: ubuntu-latest
-    # Observed on main: ~7 min to compile + ~12-15 min per shard. 40 min leaves
-    # generous headroom and still fails a genuine hang well before the default
-    # 360-minute runner timeout.
-    timeout-minutes: 40
+    # Observed on main: ~7 min to compile + ~12-15 min per shard. The workspace
+    # now includes the harness, PKM and sandbox crates and the AWS SDK: shard 1's
+    # cold-cache "compile all tests" alone took ~23 min, then ~15 min of tests.
+    # 75 min covers a cold cache and still fails a genuine hang well before the
+    # default 360-minute runner timeout.
+    timeout-minutes: 75
     strategy:
       fail-fast: false
       matrix:
