@@ -128,7 +128,8 @@ it.each([
   if (missingCredential) {
     await screen.findByText("The saved credential is missing. Enter a new API key or reconnect this provider.");
     await waitFor(() => expect(screen.getByRole("button", { name: page === "settings" ? /^Save$/ : "Next" })).toBeDisabled());
-    if (page === "setup") expect(screen.getByRole("button", { name: "Skip" })).toBeDisabled();
+    // Skip is disabled by the same state change as Next, but not necessarily in the same render.
+    if (page === "setup") await waitFor(() => expect(screen.getByRole("button", { name: "Skip" })).toBeDisabled());
   }
   fireEvent.change(await screen.findByLabelText("API key *"), { target: { value: "test-key" } });
   await screen.findByRole("img", { name: "Connection validated" }, { timeout: 3000 });
