@@ -87,6 +87,7 @@ import { SkillsSection } from "@/components/agents/configure/skills-section";
 import type { SkillBrowserHandle } from "@/components/skills/skill-browser";
 import { SandboxSection } from "@/components/agents/configure/sandbox-section";
 import { CredsSection } from "@/components/agents/configure/creds-section";
+import { ShareSection } from "@/components/agents/configure/share-section";
 
 const SECTIONS = [
   { id: "profile", label: "Profile" },
@@ -96,9 +97,13 @@ const SECTIONS = [
   { id: "skills", label: "Skills" },
   { id: "sandbox", label: "Sandbox" },
   { id: "creds", label: "Credentials" },
+  { id: "share", label: "Share" },
 ] as const;
 
 type SectionId = (typeof SECTIONS)[number]["id"];
+
+/** Sections only the agent's owner sees. */
+const OWNER_ONLY: readonly SectionId[] = ["share"];
 
 function AgentSettings() {
   const searchParams = useSearchParams();
@@ -214,13 +219,19 @@ function AgentSettings() {
     );
   }
 
+  // Agents shared *with* you are use-only: no editing, no re-sharing.
+  const isShared = agent.is_shared;
+  const visibleSections = isShared
+    ? SECTIONS.filter((s) => !OWNER_ONLY.includes(s.id))
+    : SECTIONS;
+
   return (
     <div className="flex h-full min-h-0 min-w-0 bg-surface">
       {/* Sidebar */}
       <ConfigurationSidebar
         backHref="/chat"
         backLabel="Back"
-        sections={SECTIONS}
+        sections={visibleSections}
         activeSection={activeSection}
         onSectionChange={setActiveSection}
         header={
@@ -235,6 +246,14 @@ function AgentSettings() {
         <div className={`w-full max-w-2xl mx-auto p-4 md:p-8 space-y-6 ${activeSection === "prompt" ? "flex-1 min-h-0 flex flex-col" : ""}`}>
           {error && (
             <div className="rounded-lg bg-error-bg p-3 text-sm text-error-text">{error}</div>
+          )}
+
+          {isShared && (
+            <div className="rounded-lg border border-border bg-surface-secondary p-3 text-sm text-text-secondary">
+              {agent.shared_by
+                ? `Shared with you by @${agent.shared_by}. You can use this agent but not edit it.`
+                : "Shared with you. You can use this agent but not edit it."}
+            </div>
           )}
 
           <div className={activeSection === "prompt" ? "flex-1 min-h-0 flex flex-col" : ""}>
@@ -284,10 +303,11 @@ function AgentSettings() {
               />
             )}
             {activeSection === "creds" && <CredsSection principalKind="agent" principalId={agentId} />}
+            {activeSection === "share" && <ShareSection agentId={agentId} />}
           </div>
 
           {/* Save bar */}
-          {activeSection !== "creds" && (
+          {activeSection !== "creds" && activeSection !== "share" && !isShared && (
             <div className="pt-4 pb-2 border-t border-border flex items-center justify-end gap-2">
               <button
                 onClick={handleDiscard}

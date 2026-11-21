@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { ThreadPrimitive } from "@assistant-ui/react";
 import { FronaUserMessage } from "./frona-user-message";
 import { FronaAssistantMessage } from "./frona-assistant-message";
@@ -9,6 +9,7 @@ import { ExternalToolDrawer, CollapsedToolTab, useToolWizard } from "./external-
 import { WizardAnswersContext } from "@/lib/wizard-answers-context";
 import { usePendingTools } from "@/lib/pending-tools-context";
 import { useChatPagination } from "@/lib/chat-pagination-context";
+import { ChatContext } from "@/lib/chat-context";
 import {
   ChatActivityDrawer,
   ChatActivityTab,
@@ -16,6 +17,10 @@ import {
 } from "./chat-activity-drawer";
 
 export function AssistantThread({ chatId }: { chatId?: string }) {
+  // Not `useChat()` — a brand-new (not-yet-created) chat renders this
+  // component with no `ChatProvider` ancestor, and `useChat()` throws in
+  // that case. `useContext` reads `null` safely instead.
+  const isReadOnly = useContext(ChatContext)?.isReadOnly ?? false;
   const wizard = useToolWizard();
   const chatExecutions = useChatExecutions(chatId);
   const [activityOpen, setActivityOpen] = useState(false);
@@ -148,28 +153,36 @@ export function AssistantThread({ chatId }: { chatId?: string }) {
             Scroll to bottom
           </button>
         </ThreadPrimitive.ScrollToBottom>
-        <div className="relative mx-auto w-full max-w-3xl px-3 md:px-6 pb-4">
-          <div className="relative z-0 flex items-end justify-center gap-1 px-3 md:px-6">
-            <CollapsedToolTab wizard={safeWizard} onExpand={expandQuestion} />
-            {!activityOpen && (
-              <ChatActivityTab executions={chatExecutions} onExpand={expandActivity} />
-            )}
+        {isReadOnly ? (
+          <div className="mx-auto w-full max-w-3xl px-3 md:px-6 pb-4">
+            <div className="rounded-2xl border border-border bg-surface-secondary px-4 py-3 text-center text-xs text-text-tertiary">
+              This chat was shared with you, read-only — you can&rsquo;t send messages or respond to prompts.
+            </div>
           </div>
-          <div className={`relative z-10 rounded-2xl transition-colors ${
-            hasComposerAccessory
-              ? "border border-border bg-surface-secondary focus-within:border-accent"
-              : "has-[.tool-drawer]:border has-[.tool-drawer]:border-border has-[.tool-drawer]:bg-surface-secondary has-[.tool-drawer]:focus-within:border-accent focus-within:border-accent"
-          }`}>
-            {activityOpen && (
-              <ChatActivityDrawer
-                executions={chatExecutions}
-                onCollapse={() => setActivityOpen(false)}
-              />
-            )}
-            <ExternalToolDrawer wizard={safeWizard} />
-            <FronaComposer wizard={safeWizard} />
+        ) : (
+          <div className="relative mx-auto w-full max-w-3xl px-3 md:px-6 pb-4">
+            <div className="relative z-0 flex items-end justify-center gap-1 px-3 md:px-6">
+              <CollapsedToolTab wizard={safeWizard} onExpand={expandQuestion} />
+              {!activityOpen && (
+                <ChatActivityTab executions={chatExecutions} onExpand={expandActivity} />
+              )}
+            </div>
+            <div className={`relative z-10 rounded-2xl transition-colors ${
+              hasComposerAccessory
+                ? "border border-border bg-surface-secondary focus-within:border-accent"
+                : "has-[.tool-drawer]:border has-[.tool-drawer]:border-border has-[.tool-drawer]:bg-surface-secondary has-[.tool-drawer]:focus-within:border-accent focus-within:border-accent"
+            }`}>
+              {activityOpen && (
+                <ChatActivityDrawer
+                  executions={chatExecutions}
+                  onCollapse={() => setActivityOpen(false)}
+                />
+              )}
+              <ExternalToolDrawer wizard={safeWizard} />
+              <FronaComposer wizard={safeWizard} />
+            </div>
           </div>
-        </div>
+        )}
       </ThreadPrimitive.ViewportFooter>
     </ThreadPrimitive.Root>
     </WizardAnswersContext>

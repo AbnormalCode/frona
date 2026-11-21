@@ -116,6 +116,45 @@ impl RequestCredentialsTool {
             )));
         }
 
+        // Shared agent with credential delegation: fall back to the owner's
+        // durable binding for the same agent principal. Loaded from the owner's
+        // vault and logged under the owner (for their audit); no approval is
+        // asked since the owner opted into delegation when sharing.
+        if !force
+            && let Some(owner_id) = ctx.delegated_credential_owner.as_deref()
+            && let Some(binding) = self
+                .vault_service
+                .find_binding(owner_id, &principal, &query, None)
+                .await?
+        {
+            let secret = self
+                .vault_service
+                .resolve_binding(owner_id, &principal, &binding, Some(&chat.id))
+                .await?;
+
+            self.vault_service
+                .log_access(
+                    owner_id,
+                    principal.clone(),
+                    &chat.id,
+                    &binding.connection_id,
+                    &binding.vault_item_id,
+                    None,
+                    &query,
+                    &reason,
+                )
+                .await?;
+
+            let env_vars =
+                crate::credential::vault::service::project_target(&secret, &binding.target)?;
+            let var_names: Vec<String> = env_vars.iter().map(|(k, _)| k.clone()).collect();
+
+            return Ok(ToolOutput::text(format!(
+                "Credentials approved for command startup: {}. Each command resolves current values.",
+                var_names.join(", ")
+            )));
+        }
+
         Ok(ToolOutput::text("").with_hitl(Hitl {
             prompt: format!("Allow access to credential matching '{query}'?\n\n{reason}"),
             url: format!("{}/chat?id={}", self.public_base_url, chat.id),

@@ -34,7 +34,7 @@ impl ProduceFileTool {
 
         let attachment = resolve_workspace_attachment(
             &self.storage,
-            &ctx.user.handle,
+            &ctx.agent_owner_handle,
             &ctx.agent.handle,
             relative_path,
         )

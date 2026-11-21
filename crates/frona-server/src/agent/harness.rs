@@ -692,6 +692,13 @@ impl Harness {
             &te.chat_id,
             chat.space_id.clone(),
         );
+        // Owner handle for a shared agent (runner != owner) so a resumed tool's
+        // sandbox resolves the owner's workspace/policy; runner's own otherwise.
+        let agent_owner_handle = if agent.user_id == user.id {
+            user.handle.clone()
+        } else {
+            self.user_service.handle_of(&agent.user_id).await?
+        };
         let ctx = InferenceContext::new(
             user.clone(),
             agent,
@@ -699,7 +706,8 @@ impl Harness {
             event_tx,
             self.shutdown_token.clone(),
             CancellationToken::new(),
-        );
+        )
+        .with_agent_owner_handle(agent_owner_handle);
 
         let request = hitl.request.clone();
         let outcome = tool

@@ -51,8 +51,12 @@ impl ReadTool {
             .and_then(|v| v.as_u64())
             .map(|n| n as usize);
 
-        let resolved =
-            super::resolve_path(path_arg, &ctx.user.handle, &ctx.agent.handle, &self.storage)?;
+        let resolved = super::resolve_path(
+            path_arg,
+            &ctx.agent_owner_handle,
+            &ctx.agent.handle,
+            &self.storage,
+        )?;
         let sandbox = self.sandbox_manager.for_tool(ctx).await?;
         if !sandbox.is_readable(&resolved) {
             return Ok(ToolOutput::error(format!(

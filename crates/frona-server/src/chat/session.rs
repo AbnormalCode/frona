@@ -71,6 +71,23 @@ impl ChatSessionContext {
             .await?
             .ok_or_else(|| AppError::NotFound("User not found".into()))?;
 
+        // For a shared agent (runner != owner), definition-scoped lookups must
+        // resolve under the OWNER: skills, agent workspace, sandbox policy.
+        // For an owned agent this is just the runner's own handle.
+        let agent_owner_handle = if agent.user_id == user_id {
+            user.handle.clone()
+        } else {
+            harness.user_service.handle_of(&agent.user_id).await?
+        };
+
+        // If this is a shared agent whose owner opted into credential
+        // delegation, the recipient's run may use the owner's agent credentials.
+        let delegated_credential_owner = harness
+            .agent_service
+            .credential_delegation_owner(&agent, user_id)
+            .await
+            .unwrap_or(None);
+
         // Load task early so `build_agent_registry` can register
         // task-domain tools in the same pass.
         let task = if let Some(ref task_id) = chat.task_id {
@@ -192,7 +209,9 @@ impl ChatSessionContext {
             event_sender,
             harness.shutdown_token.clone(),
             cancel_token.clone(),
-        );
+        )
+        .with_agent_owner_handle(agent_owner_handle)
+        .with_delegated_credential_owner(delegated_credential_owner);
         tool_ctx.file_paths = file_paths;
         tool_ctx.task = task;
 

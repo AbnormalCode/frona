@@ -17,6 +17,17 @@ use crate::chat::message::models::Reasoning;
 pub struct InferenceContext {
     pub user: User,
     pub agent: Agent,
+    /// Handle of the user who OWNS `agent`. Equal to `user.handle` for an owned
+    /// agent; differs when the agent was shared with the running user, so
+    /// definition/execution-scoped lookups (skills, agent workspace, sandbox
+    /// policy) resolve under the owner. Runner-scoped concerns (vault, memory,
+    /// ephemeral token) keep using `user`.
+    pub agent_owner_handle: crate::core::Handle,
+    /// When this is a shared agent whose owner opted into credential
+    /// delegation, the owner's user id - the account whose agent credential
+    /// bindings this run may use. `None` for owned agents or shares without
+    /// delegation.
+    pub delegated_credential_owner: Option<String>,
     /// The originating chat, or `None` for a **detached** inference (background /
     /// sync passes that have no chat - e.g. the PKM sync investigator). Chat-scoped
     /// tools reach it via [`active_chat`], which refuses cleanly when it's `None`.
@@ -50,9 +61,14 @@ impl InferenceContext {
         shutdown_token: CancellationToken,
         cancel_token: CancellationToken,
     ) -> Self {
+        // Default to the runner as owner; `with_agent_owner_handle` overrides
+        // this for shared agents. Correct for the common owned-agent case.
+        let agent_owner_handle = user.handle.clone();
         Self {
             user,
             agent,
+            agent_owner_handle,
+            delegated_credential_owner: None,
             chat: Some(chat),
             task: None,
             event_tx,
@@ -72,6 +88,9 @@ impl InferenceContext {
         cancel_token: CancellationToken,
     ) -> Self {
         Self {
+            // Detached runs have no share context: the runner is the owner.
+            agent_owner_handle: user.handle.clone(),
+            delegated_credential_owner: None,
             user,
             agent,
             chat: None,
@@ -85,6 +104,19 @@ impl InferenceContext {
 
     pub fn with_task(mut self, task: Task) -> Self {
         self.task = Some(task);
+        self
+    }
+
+    /// Override the agent-owner handle (used when the agent was shared with the
+    /// running user, so their runs resolve the owner's skills/workspace/policy).
+    pub fn with_agent_owner_handle(mut self, handle: crate::core::Handle) -> Self {
+        self.agent_owner_handle = handle;
+        self
+    }
+
+    /// Mark that this run may use the given owner's delegated agent credentials.
+    pub fn with_delegated_credential_owner(mut self, owner_id: Option<String>) -> Self {
+        self.delegated_credential_owner = owner_id;
         self
     }
 }

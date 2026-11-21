@@ -19,6 +19,7 @@ mod navigation;
 mod notifications;
 mod push;
 mod security;
+mod shares;
 mod spaces;
 mod system;
 mod tasks;

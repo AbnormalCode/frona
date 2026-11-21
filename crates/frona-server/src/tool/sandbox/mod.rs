@@ -71,14 +71,22 @@ impl SandboxManager {
         ctx: &crate::inference::request::InferenceContext,
     ) -> Result<Sandbox, AppError> {
         let mut sandbox = self.for_tool(ctx).await?;
-        let env = self
+        let chat_id = ctx.chat.as_ref().map(|chat| chat.id.as_str());
+        let mut env = self
             .vault_service
-            .resolve_env(
-                &ctx.user.id,
-                &Principal::agent(&ctx.agent.id),
-                ctx.chat.as_ref().map(|chat| chat.id.as_str()),
-            )
+            .resolve_env(&ctx.user.id, &Principal::agent(&ctx.agent.id), chat_id)
             .await?;
+        // Credential delegation: a shared agent whose owner opted in also gets
+        // the owner's durable agent credentials. Best effort - a stale
+        // delegated binding must not block the commands that don't need it.
+        if let Some(owner_id) = ctx.delegated_credential_owner.as_deref() {
+            let delegated = self
+                .vault_service
+                .resolve_delegated_env(owner_id, &ctx.agent.id, chat_id.unwrap_or_default())
+                .await
+                .unwrap_or_default();
+            env.extend(delegated);
+        }
         // Reserved Frona variables stay last, as in the other launch paths.
         sandbox.prepend_env_vars(env);
         Ok(sandbox)
@@ -106,12 +114,17 @@ impl SandboxManager {
     ) -> Result<Sandbox, AppError> {
         let agent_id = &ctx.agent.id;
 
+        // Definition/execution-scoped lookups resolve under the agent OWNER
+        // (`ctx.agent.user_id` / `ctx.agent_owner_handle`), so a shared agent
+        // runs with its owner's sandbox policy, skills, and workspace even when
+        // a different user drives it. Owned-agent runs are unaffected (owner ==
+        // runner). The ephemeral token below stays runner-scoped on purpose.
         let policy = self
             .policy_service
             .evaluate_sandbox_policy(
                 crate::policy::service::SandboxPrincipalRef::agent(
-                    &ctx.user.id,
-                    &ctx.user.handle,
+                    &ctx.agent.user_id,
+                    &ctx.agent_owner_handle,
                     &ctx.agent.handle,
                 ),
                 true,
@@ -121,7 +134,7 @@ impl SandboxManager {
         let skill_read_paths: Vec<String> = self
             .skill_service
             .list(
-                &ctx.user.handle,
+                &ctx.agent_owner_handle,
                 &ctx.agent.handle,
                 ctx.agent.skills.as_deref(),
             )
@@ -132,7 +145,7 @@ impl SandboxManager {
 
         let workspace = self
             .storage_service
-            .agent_workspace_path(&ctx.user.handle, &ctx.agent.handle);
+            .agent_workspace_path(&ctx.agent_owner_handle, &ctx.agent.handle);
 
         // Ambient grant: if the agent is authorized for the `memory` tool group,
         // expose the user's memory dir read-only (the PKM page tree / Obsidian

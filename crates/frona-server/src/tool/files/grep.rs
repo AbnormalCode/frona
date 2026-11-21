@@ -52,7 +52,7 @@ impl GrepTool {
         let scope_input = scope_arg.unwrap_or(".");
         let resolved = super::resolve_path(
             scope_input,
-            &ctx.user.handle,
+            &ctx.agent_owner_handle,
             &ctx.agent.handle,
             &self.storage,
         )?;
