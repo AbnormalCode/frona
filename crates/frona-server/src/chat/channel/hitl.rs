@@ -144,6 +144,7 @@ pub fn kind_for(req: &HitlRequest) -> HitlKind {
         },
         HitlRequest::App { .. } => HitlKind::Approval,
         HitlRequest::Credential { .. } => HitlKind::External,
+        HitlRequest::Skills { .. } => HitlKind::Approval,
     }
 }
 

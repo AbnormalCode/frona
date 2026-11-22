@@ -471,6 +471,11 @@ fn create_builtin_tools(state: &AppState) -> Vec<Arc<dyn AgentTool>> {
             state.policy_service.clone(),
             prompts.clone(),
         )),
+        Arc::new(super::skills::SkillsTool::new(
+            state.skill_service.clone(),
+            prompts.clone(),
+            state.config.server.external_or_local_base_url(),
+        )),
     ];
 
     // The active memory service contributes its own tools (e.g. store-memory).

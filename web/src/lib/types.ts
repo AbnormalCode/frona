@@ -224,11 +224,22 @@ export type MessageTool =
 export type PauseReason =
   | { type: "Hitl" };
 
+export interface SkillCandidate {
+  name: string;
+  /** `owner/repo` on GitHub the skill would be installed from. */
+  repo: string;
+  description: string;
+}
+
+/** Where an approved skill lands - this agent only, or all of the user's agents. */
+export type SkillInstallScope = "agent" | "user";
+
 export type HitlRequest =
   | { type: "Question"; data: { options: string[] } }
   | { type: "Takeover"; data: { reason: string; debugger_url: string } }
   | { type: "App"; data: { action: string; manifest: Record<string, unknown>; previous_manifest: Record<string, unknown> | null } }
-  | { type: "Credential"; data: { query: string; reason: string } };
+  | { type: "Credential"; data: { query: string; reason: string } }
+  | { type: "Skills"; data: { items: SkillCandidate[]; scope: SkillInstallScope; reason: string } };
 
 export type VaultField =
   | "Password"
