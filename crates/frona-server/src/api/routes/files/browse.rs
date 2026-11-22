@@ -1,5 +1,6 @@
 use axum::Json;
 use axum::extract::{Path as AxumPath, Query, State};
+use axum::http::HeaderMap;
 use axum::response::Response;
 use tokio::fs;
 
@@ -19,8 +20,9 @@ use crate::core::state::AppState;
 pub(crate) async fn download_user_file(
     file_auth: FileAuth,
     State(state): State<AppState>,
-    AxumPath((handle_raw, filename)): AxumPath<(String, String)>,
+    headers: HeaderMap,
     Query(query): Query<FileResponseQuery>,
+    AxumPath((handle_raw, filename)): AxumPath<(String, String)>,
 ) -> Result<Response, ApiError> {
     let handle = crate::core::Handle::try_new(handle_raw)
         .map_err(|_| ApiError(AppError::NotFound("File not found".into())))?;
@@ -45,14 +47,15 @@ pub(crate) async fn download_user_file(
     }
 
     let vpath = VirtualPath::user(&handle, &filename);
-    super::serve_file(&vpath, &state, query.download).await
+    super::serve_file(&vpath, &state, &headers, query.download).await
 }
 
 pub(crate) async fn download_agent_file(
     file_auth: FileAuth,
     State(state): State<AppState>,
-    AxumPath((agent_seg, filepath)): AxumPath<(String, String)>,
+    headers: HeaderMap,
     Query(query): Query<FileResponseQuery>,
+    AxumPath((agent_seg, filepath)): AxumPath<(String, String)>,
 ) -> Result<Response, ApiError> {
     let (user_id, user_handle) = match &file_auth {
         FileAuth::User(auth) => (auth.user_id.clone(), auth.handle.clone()),
@@ -95,7 +98,7 @@ pub(crate) async fn download_agent_file(
         .file_name()
         .and_then(|name| name.to_str())
         .unwrap_or("download");
-    super::serve_open_file(fs::File::from_std(file), filename, query.download)
+    super::serve_open_file(fs::File::from_std(file), filename, &headers, query.download).await
 }
 
 pub(crate) async fn delete_user_file(

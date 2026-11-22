@@ -15,6 +15,8 @@ import { fetchFile } from "@/lib/file-transfer";
 import { agentDisplayName } from "@/lib/types";
 import type { Attachment } from "@/lib/types";
 import { isMessageError } from "@/lib/message-error";
+import { MediaAttachment } from "@/components/preview/media-attachment";
+import { mediaKind } from "@/lib/media-utils";
 import { DefaultToolCallUI } from "./tool-uis/default-tool-call-ui";
 import { ToolTimelineProvider } from "./tool-uis/tool-timeline-context";
 import { ArrowDownTrayIcon, XMarkIcon, ClipboardDocumentListIcon, SparklesIcon, ExclamationCircleIcon } from "@heroicons/react/24/outline";
@@ -252,6 +254,7 @@ function FilePreviewModal({ attachment, onClose }: { attachment: Attachment; onC
 function AttachmentItem({ attachment }: { attachment: Attachment }) {
   const url = attachment.url;
   const isImage = attachment.content_type.startsWith("image/");
+  const media = mediaKind(attachment.content_type, attachment.filename);
   const canPreview = canPreviewFile(attachment.content_type, attachment.filename);
   const [showPreview, setShowPreview] = useState(false);
 
@@ -267,6 +270,10 @@ function AttachmentItem({ attachment }: { attachment: Attachment }) {
         />
       </a>
     );
+  }
+
+  if (media) {
+    return <MediaAttachment url={url} filename={attachment.filename} kind={media} />;
   }
 
   return (
