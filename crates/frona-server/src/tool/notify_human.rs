@@ -8,12 +8,37 @@ use crate::inference::hitl::{Hitl, HitlOutcome, HitlRequest, HitlResponse};
 use crate::inference::tool_call::ToolStatus;
 use frona_derive::agent_tool;
 
+use super::browser::active_profile;
 use super::{InferenceContext, ToolOutput, active_chat};
+use crate::core::config::TakeoverMethod;
+
+/// The takeover link for `method`. The debugger needs a saved login to attach
+/// to (its route is keyed by credential), so without one it falls back to the
+/// live view rather than handing the person no link at all.
+fn takeover_url(
+    method: TakeoverMethod,
+    public_base_url: &str,
+    profile: &str,
+    first_credential_id: Option<&str>,
+) -> String {
+    match (method, first_credential_id) {
+        (TakeoverMethod::Debugger, Some(credential_id)) => {
+            format!("/api/browser/debugger/{credential_id}")
+        }
+        _ => {
+            let query: String = url::form_urlencoded::Serializer::new(String::new())
+                .append_pair("profile", profile)
+                .finish();
+            format!("{public_base_url}/browser?{query}")
+        }
+    }
+}
 
 pub struct NotifyHumanTool {
     vault_service: VaultService,
     prompts: PromptLoader,
     public_base_url: String,
+    takeover: TakeoverMethod,
 }
 
 impl NotifyHumanTool {
@@ -21,12 +46,37 @@ impl NotifyHumanTool {
         vault_service: VaultService,
         prompts: PromptLoader,
         public_base_url: String,
+        takeover: TakeoverMethod,
     ) -> Self {
         Self {
             vault_service,
             prompts,
             public_base_url,
+            takeover,
         }
+    }
+
+    /// Where the person is sent to take over the browser, per the configured
+    /// method. Kept in the HITL request's `debugger_url` field so stored
+    /// takeovers still parse.
+    async fn takeover_url(&self, user_id: &str) -> String {
+        let profile = active_profile(&self.vault_service, user_id).await;
+        let first_credential = match self.takeover {
+            TakeoverMethod::Debugger => self
+                .vault_service
+                .list_credentials(user_id)
+                .await
+                .ok()
+                .and_then(|creds| creds.into_iter().next())
+                .map(|c| c.id),
+            TakeoverMethod::LiveView => None,
+        };
+        takeover_url(
+            self.takeover,
+            &self.public_base_url,
+            &profile,
+            first_credential.as_deref(),
+        )
     }
 
     fn url_for_chat(&self, chat_id: &str) -> String {
@@ -50,14 +100,7 @@ impl NotifyHumanTool {
                     .and_then(|v| v.as_str())
                     .unwrap_or("User intervention needed")
                     .to_string();
-                let debugger_url = self
-                    .vault_service
-                    .list_credentials(&ctx.user.id)
-                    .await
-                    .ok()
-                    .and_then(|creds| creds.into_iter().next())
-                    .map(|c| format!("/api/browser/debugger/{}", c.id))
-                    .unwrap_or_default();
+                let debugger_url = self.takeover_url(&ctx.user.id).await;
 
                 Ok(ToolOutput::text("").with_hitl(Hitl {
                     prompt: if debugger_url.is_empty() {
@@ -127,5 +170,43 @@ impl NotifyHumanTool {
                 "Unknown notify_human sub-tool: {tool_name}"
             ))),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const BASE: &str = "https://frona.example.com";
+
+    #[test]
+    fn live_view_links_to_the_page_for_the_active_profile() {
+        let url = takeover_url(TakeoverMethod::LiveView, BASE, "google", Some("cred-1"));
+        assert_eq!(url, "https://frona.example.com/browser?profile=google");
+    }
+
+    #[test]
+    fn the_profile_is_url_encoded() {
+        let url = takeover_url(TakeoverMethod::LiveView, BASE, "a b&c", None);
+        assert_eq!(url, "https://frona.example.com/browser?profile=a+b%26c");
+    }
+
+    #[test]
+    fn debugger_links_to_the_credentials_proxy_route() {
+        let url = takeover_url(TakeoverMethod::Debugger, BASE, "google", Some("cred-1"));
+        assert_eq!(url, "/api/browser/debugger/cred-1");
+    }
+
+    /// The debugger route is keyed by a saved login. A person with none must
+    /// still be given a way in, not an empty link.
+    #[test]
+    fn debugger_falls_back_to_the_live_view_without_a_saved_login() {
+        let url = takeover_url(TakeoverMethod::Debugger, BASE, "default", None);
+        assert_eq!(url, "https://frona.example.com/browser?profile=default");
+    }
+
+    #[test]
+    fn the_default_method_is_the_live_view() {
+        assert_eq!(TakeoverMethod::default(), TakeoverMethod::LiveView);
     }
 }

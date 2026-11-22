@@ -715,3 +715,119 @@ async fn live_browserless_debugger_ui_and_cdp_are_scoped_to_owner() {
         .await
         .unwrap();
 }
+
+async fn state_with_browser() -> (AppState, tempfile::TempDir, MockServer) {
+    let (mut state, directory) = test_app_state_with_sandbox(true).await;
+    let upstream = MockServer::start().await;
+    state.browser_session_manager = Arc::new(BrowserSessionManager::new(Some(BrowserConfig {
+        ws_url: upstream.uri().replacen("http://", "ws://", 1),
+        ..Default::default()
+    })));
+    (state, directory, upstream)
+}
+
+#[tokio::test]
+async fn live_link_requires_auth() {
+    let (state, _directory, _upstream) = state_with_browser().await;
+    for token in ["", "invalid"] {
+        let request = if token.is_empty() {
+            Request::builder()
+                .uri("/api/browser/live/link")
+                .body(Body::empty())
+                .unwrap()
+        } else {
+            auth_get("/api/browser/live/link", token)
+        };
+        let response = build_app(state.clone()).oneshot(request).await.unwrap();
+        assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+    }
+}
+
+#[tokio::test]
+async fn live_link_is_refused_when_no_browser_is_configured() {
+    let (state, _directory) = test_app_state_with_sandbox(true).await;
+    let (token, _) =
+        register_user(&state, "nobrowser", "nobrowser@example.com", "password123").await;
+    let response = build_app(state)
+        .oneshot(auth_get("/api/browser/live/link", &token))
+        .await
+        .unwrap();
+    assert!(
+        !response.status().is_success(),
+        "a link to a browser that does not exist must not be minted"
+    );
+}
+
+/// The token only gates the WebSocket upgrade, so it must be good for exactly
+/// the profile it was minted for and nothing else.
+#[tokio::test]
+async fn live_link_mints_a_token_scoped_to_the_profile_and_user() {
+    let (state, _directory, _upstream) = state_with_browser().await;
+    let (token, user_id) =
+        register_user(&state, "liveuser", "liveuser@example.com", "password123").await;
+
+    let response = build_app(state.clone())
+        .oneshot(auth_get("/api/browser/live/link", &token))
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = body_json(response).await;
+    assert_eq!(body["profile"], "default");
+
+    let claims = state
+        .presign_service
+        .verify(body["token"].as_str().unwrap())
+        .await
+        .expect("the minted token verifies");
+    assert_eq!(claims.owner, "browser-live");
+    assert_eq!(claims.path, "default");
+    assert_eq!(claims.sub, user_id);
+}
+
+#[tokio::test]
+async fn live_link_follows_the_profile_the_agent_is_using() {
+    let (state, _directory, _upstream) = state_with_browser().await;
+    let (token, user_id) =
+        register_user(&state, "livelogin", "livelogin@example.com", "password123").await;
+    // A saved login makes its provider the agent's browser profile.
+    let credential = state
+        .vault_service
+        .create_credential(
+            &user_id,
+            CreateLocalItemRequest::BrowserProfile {
+                name: "Browser".into(),
+            },
+        )
+        .await
+        .unwrap();
+
+    let response = build_app(state.clone())
+        .oneshot(auth_get("/api/browser/live/link", &token))
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = body_json(response).await;
+    assert_eq!(body["profile"], credential.provider);
+}
+
+#[tokio::test]
+async fn live_link_refuses_profiles_the_user_does_not_have() {
+    let (state, _directory, _upstream) = state_with_browser().await;
+    let (token, _) =
+        register_user(&state, "liveother", "liveother@example.com", "password123").await;
+    // `..` and separators become a directory name under the profiles volume.
+    for profile in ["google", "..%2Fetc", "a%2Fb", "..%5Cx"] {
+        let response = build_app(state.clone())
+            .oneshot(auth_get(
+                &format!("/api/browser/live/link?profile={profile}"),
+                &token,
+            ))
+            .await
+            .unwrap();
+        assert_eq!(
+            response.status(),
+            StatusCode::NOT_FOUND,
+            "profile {profile:?} must not be accepted"
+        );
+    }
+}

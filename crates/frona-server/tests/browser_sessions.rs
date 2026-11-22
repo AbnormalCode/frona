@@ -124,6 +124,7 @@ impl FailureServer {
         let closed = Arc::new(Notify::new());
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let config = BrowserConfig {
+            takeover_method: Default::default(),
             ws_url: format!("ws://{}{}", listener.local_addr().unwrap(), query),
             api_token: token.map(str::to_owned),
             profiles_path: "/profiles +&#".into(),

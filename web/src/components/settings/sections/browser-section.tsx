@@ -1,7 +1,7 @@
 "use client";
 
-import type { BrowserConfig } from "@/lib/config-types";
-import { TextInput, NumberInput, Toggle, SectionHeader, SectionPanel } from "@/components/settings/field";
+import type { BrowserConfig, TakeoverMethod } from "@/lib/config-types";
+import { TextInput, NumberInput, SelectInput, Toggle, SectionHeader, SectionPanel } from "@/components/settings/field";
 import { GlobeAltIcon } from "@heroicons/react/24/outline";
 
 interface BrowserSectionProps {
@@ -13,7 +13,13 @@ const defaultBrowser: BrowserConfig = {
   ws_url: "ws://browserless:3333",
   profiles_path: "/profiles",
   connection_timeout_ms: 30000,
+  takeover_method: "live_view",
 };
+
+const takeoverMethods = [
+  { value: "live_view", label: "Live view (stream the page into Frona)" },
+  { value: "debugger", label: "Browserless debugger (proxied)" },
+];
 
 export function BrowserSection({ browser, onChange }: BrowserSectionProps) {
   return (
@@ -53,6 +59,15 @@ export function BrowserSection({ browser, onChange }: BrowserSectionProps) {
             onChange={(secs) => onChange({ ...browser, connection_timeout_ms: secs * 1000 })}
             min={1}
             placeholder="30"
+          />
+
+          <SelectInput
+            label="Takeover Method"
+            description="What the agent's request for help opens. The live view streams the page over Frona's own origin and needs nothing extra routed. The debugger is Browserless's own UI through Frona's proxy and needs a saved login, falling back to the live view without one. Takes effect after a restart."
+            value={browser.takeover_method ?? "live_view"}
+            allowEmpty={false}
+            onChange={(method) => onChange({ ...browser, takeover_method: (method as TakeoverMethod) || "live_view" })}
+            options={takeoverMethods}
           />
         </>
       )}

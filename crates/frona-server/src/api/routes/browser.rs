@@ -1,3 +1,5 @@
+mod live;
+
 use axum::extract::{Path, Request, State};
 use axum::http::{HeaderMap, StatusCode};
 use axum::response::{IntoResponse, Redirect, Response};
@@ -31,6 +33,8 @@ localStorage.setItem(key, JSON.stringify(settings));"#;
 pub fn router() -> Router<AppState> {
     Router::new()
         .route("/api/browser/snapshot", get(snapshot))
+        .route("/api/browser/live/link", get(live::live_link))
+        .route("/api/browser/live/ws", get(live::live_socket))
         .route("/api/auth/browser/{credential_id}", get(auth_gate))
         .route("/api/browser/debugger/{credential_id}", get(document))
         .route("/api/browser/debugger/{credential_id}/", get(document))
@@ -42,14 +46,7 @@ pub fn router() -> Router<AppState> {
 
 async fn snapshot(auth: AuthUser, State(state): State<AppState>) -> Result<Response, ApiError> {
     // Match BrowserTool's profile selection without exposing profile credentials.
-    let provider = state
-        .vault_service
-        .list_credentials(&auth.user_id)
-        .await?
-        .into_iter()
-        .next()
-        .map(|credential| credential.provider)
-        .unwrap_or_else(|| "default".to_string());
+    let provider = crate::tool::browser::active_profile(&state.vault_service, &auth.user_id).await;
     let Some(connection) = state
         .browser_session_manager
         .existing_connection(&auth.handle, &provider)

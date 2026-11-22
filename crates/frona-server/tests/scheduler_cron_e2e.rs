@@ -37,6 +37,7 @@ fn test_config(tmp: &tempfile::TempDir) -> Config {
             path: format!("{base}/db"),
         },
         browser: Some(frona::core::config::BrowserConfig {
+            takeover_method: Default::default(),
             ws_url: "ws://localhost:0".to_string(),
             api_token: None,
             profiles_path: format!("{base}/profiles"),

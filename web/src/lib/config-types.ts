@@ -67,10 +67,14 @@ export interface SsoConfig {
   signups_match_email: boolean;
 }
 
+export type TakeoverMethod = "live_view" | "debugger";
+
 export interface BrowserConfig {
   ws_url: string;
   profiles_path: string;
   connection_timeout_ms: number;
+  /** How a person takes over the agent's browser. Takes effect after a restart. */
+  takeover_method: TakeoverMethod;
 }
 
 export interface SearchConfig {

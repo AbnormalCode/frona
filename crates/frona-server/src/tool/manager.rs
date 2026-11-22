@@ -390,6 +390,12 @@ fn create_builtin_tools(state: &AppState) -> Vec<Arc<dyn AgentTool>> {
             state.vault_service.clone(),
             prompts.clone(),
             state.config.server.external_or_local_base_url(),
+            state
+                .config
+                .browser
+                .as_ref()
+                .map(|browser| browser.takeover_method)
+                .unwrap_or_default(),
         )),
         Arc::new(super::send_message::SendMessageTool::new(
             state.chat_service.clone(),

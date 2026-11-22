@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Weak};
 use std::time::Duration;
 
@@ -6,7 +7,7 @@ use axum::body::Body;
 use http_body_util::BodyExt;
 use hyper_util::client::legacy::Client;
 use hyper_util::rt::TokioExecutor;
-use tokio::sync::{Mutex, RwLock};
+use tokio::sync::{Mutex, Notify, RwLock};
 
 use crate::core::config::BrowserConfig;
 use crate::core::error::AppError;
@@ -39,11 +40,38 @@ pub(crate) struct BrowserlessSession {
     user_data_dir: Option<String>,
 }
 
+/// Per profile: the attached live viewer's id and its "you were replaced" signal.
+type LiveViewers = Arc<std::sync::Mutex<HashMap<String, (u64, Arc<Notify>)>>>;
+
 #[derive(Clone)]
 pub struct BrowserSessionManager {
     config: Option<BrowserConfig>,
     sessions: Arc<RwLock<HashMap<String, BrowserConnection>>>,
     profile_locks: Arc<Mutex<HashMap<String, Weak<Mutex<()>>>>>,
+    /// The live viewer currently attached to each profile. A tab has one
+    /// screencast, so a second viewer takes over from the first instead of the
+    /// two stopping each other's stream.
+    live_viewers: LiveViewers,
+    next_live_viewer: Arc<AtomicU64>,
+}
+
+/// A live viewer's hold on a profile. `replaced` fires when another viewer
+/// opens the same profile; dropping the claim releases it.
+pub struct LiveViewClaim {
+    pub replaced: Arc<Notify>,
+    key: String,
+    id: u64,
+    viewers: LiveViewers,
+}
+
+impl Drop for LiveViewClaim {
+    fn drop(&mut self) {
+        if let Ok(mut viewers) = self.viewers.lock()
+            && viewers.get(&self.key).is_some_and(|(id, _)| *id == self.id)
+        {
+            viewers.remove(&self.key);
+        }
+    }
 }
 
 impl BrowserSessionManager {
@@ -52,6 +80,36 @@ impl BrowserSessionManager {
             config,
             sessions: Arc::new(RwLock::new(HashMap::new())),
             profile_locks: Arc::new(Mutex::new(HashMap::new())),
+            live_viewers: Arc::new(std::sync::Mutex::new(HashMap::new())),
+            next_live_viewer: Arc::new(AtomicU64::new(0)),
+        }
+    }
+
+    /// Register a live viewer for a profile, telling any viewer already on it
+    /// to stand down.
+    pub fn claim_live_view(
+        &self,
+        user_handle: &crate::core::Handle,
+        provider: &str,
+    ) -> LiveViewClaim {
+        let key = Self::profile_key(user_handle, provider);
+        let id = self.next_live_viewer.fetch_add(1, Ordering::Relaxed);
+        let replaced = Arc::new(Notify::new());
+        let previous = self
+            .live_viewers
+            .lock()
+            .ok()
+            .and_then(|mut viewers| viewers.insert(key.clone(), (id, replaced.clone())));
+        if let Some((_, previous)) = previous {
+            // `notify_one` keeps the permit if the old viewer isn't waiting at
+            // this instant, so it can't miss being replaced.
+            previous.notify_one();
+        }
+        LiveViewClaim {
+            replaced,
+            key,
+            id,
+            viewers: self.live_viewers.clone(),
         }
     }
 
@@ -386,6 +444,7 @@ mod tests {
 
     fn cfg(ws_url: &str) -> BrowserConfig {
         BrowserConfig {
+            takeover_method: Default::default(),
             ws_url: ws_url.into(),
             api_token: None,
             profiles_path: "/profiles".into(),

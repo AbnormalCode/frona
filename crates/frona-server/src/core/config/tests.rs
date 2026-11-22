@@ -472,3 +472,19 @@ fn strip_defaults_leaves_a_config_without_billing_untouched() {
         serde_json::json!({ "providers": { "openai": { "api_key": "sk-123" } } })
     );
 }
+
+#[test]
+fn takeover_method_defaults_to_the_live_view_and_accepts_the_debugger() {
+    let unset: BrowserConfig =
+        serde_yaml::from_str("ws_url: ws://browserless:3333").expect("parses");
+    assert_eq!(unset.takeover_method, TakeoverMethod::LiveView);
+
+    let debugger: BrowserConfig =
+        serde_yaml::from_str("ws_url: ws://b:3333\ntakeover_method: debugger").expect("parses");
+    assert_eq!(debugger.takeover_method, TakeoverMethod::Debugger);
+
+    assert!(
+        serde_yaml::from_str::<BrowserConfig>("takeover_method: carrier_pigeon").is_err(),
+        "an unknown method must not silently fall back"
+    );
+}

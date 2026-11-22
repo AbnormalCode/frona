@@ -287,6 +287,26 @@ pub struct BrowserConfig {
     pub profiles_path: String,
     #[schemars(description = "Browser connection timeout in milliseconds.")]
     pub connection_timeout_ms: u64,
+    #[schemars(
+        description = "How a person takes over the agent's browser when it asks for help: `live_view` streams the page into Frona itself, over its own origin; `debugger` opens Browserless's debugger UI through Frona's proxy. Takes effect after a restart."
+    )]
+    pub takeover_method: TakeoverMethod,
+}
+
+/// Which takeover surface the agent's request for help links to. Both reach the
+/// same browser session; they differ in what the person sees and what has to be
+/// reachable for it to work.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Deserialize, Serialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum TakeoverMethod {
+    /// The page's pixels stream over a WebSocket on Frona's own origin and the
+    /// person's mouse and keyboard are replayed back in. Needs nothing extra to
+    /// route and exposes no Browserless token.
+    #[default]
+    LiveView,
+    /// Browserless's own debugger UI, proxied through Frona. Needs a saved
+    /// login to attach to, and falls back to the live view without one.
+    Debugger,
 }
 
 impl Default for BrowserConfig {
@@ -296,6 +316,7 @@ impl Default for BrowserConfig {
             api_token: None,
             profiles_path: "/profiles".into(),
             connection_timeout_ms: 30000,
+            takeover_method: TakeoverMethod::default(),
         }
     }
 }
