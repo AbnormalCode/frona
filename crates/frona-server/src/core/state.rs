@@ -155,6 +155,7 @@ pub struct AppState {
     pub active_sessions: ActiveSessions,
     pub execution_registry: ExecutionRegistry,
     pub notification_service: NotificationService,
+    pub cost_service: crate::cost::CostService,
     pub push_subscription_repo: Arc<dyn PushSubscriptionRepository>,
     pub push_sender: Option<Arc<PushSender>>,
     pub sandbox_factory: Arc<SandboxFactory>,
@@ -316,7 +317,7 @@ impl AppState {
         let cli_tools_config = Arc::new(cli_tools_config);
 
         let usage_service = crate::inference::usage::UsageService::new(
-            model_catalog,
+            model_catalog.clone(),
             SurrealRepo::new(db.clone()),
             broadcast_service.clone(),
         )
@@ -556,6 +557,9 @@ impl AppState {
             user_service.clone(),
         );
 
+        let task_service =
+            TaskService::new(SurrealRepo::new(db.clone()), broadcast_service.clone());
+
         let mut agent_service = AgentService::new(
             SurrealRepo::new(db.clone()),
             &config.cache,
@@ -564,6 +568,9 @@ impl AppState {
             user_service.clone(),
         );
         agent_service.set_share_service(agent_share_service.clone());
+        // Lets a built-in agent declaring a `cron:` schedule (the cost analyst)
+        // have its recurring task seeded when it is first cloned for a user.
+        agent_service.set_task_service(task_service.clone(), config.server.timezone.clone());
 
         let app_manager = Arc::new(AppManager::new(
             sandbox_manager.clone(),
@@ -750,8 +757,6 @@ impl AppState {
         );
         let contact_service =
             ContactService::new(SurrealRepo::new(db.clone()), broadcast_service.clone());
-        let task_service =
-            TaskService::new(SurrealRepo::new(db.clone()), broadcast_service.clone());
         let signal_service = Arc::new(SignalService::new(
             task_service.clone(),
             task_executor.clone(),
@@ -834,6 +839,13 @@ impl AppState {
             active_sessions,
             execution_registry,
             notification_service: notification_service.clone(),
+            cost_service: crate::cost::CostService::new(
+                SurrealRepo::new(db.clone()),
+                SurrealRepo::new(db.clone()),
+                model_catalog.clone(),
+                config_arc.clone(),
+                notification_service.clone(),
+            ),
             push_subscription_repo,
             push_sender,
             policy_service: policy_service.clone(),

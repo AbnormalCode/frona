@@ -1,5 +1,5 @@
 pub mod models;
-mod pricing;
+pub(crate) mod pricing;
 pub mod repository;
 pub mod service;
 

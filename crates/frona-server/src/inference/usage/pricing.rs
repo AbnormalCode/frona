@@ -4,7 +4,7 @@ use frona_harness::inference::provider::ModelConfig;
 use frona_model_catalog::{ModelCatalogSnapshot, catalog::TokenUsage};
 use rig_core::completion::request::Usage;
 
-pub(super) fn compute(
+pub(crate) fn compute(
     snapshot: &ModelCatalogSnapshot,
     model: &ModelConfig,
     usage: &Usage,

@@ -71,6 +71,12 @@ pub const BUILTIN_PROVIDERS: &[BuiltinSpec] = &[
         configurable: true,
     },
     BuiltinSpec {
+        id: "cost",
+        display_name: "cost",
+        description: "Read instance-wide inference usage and cost, reprice traffic against other models, and file cost reports. Only available to the cost-analyst agent, and only for an operator holding view_usage_analytics.",
+        configurable: true,
+    },
+    BuiltinSpec {
         id: "agent",
         display_name: "agent",
         description: "Create new agents. Only available to the system agent.",

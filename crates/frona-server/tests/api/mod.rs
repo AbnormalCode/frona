@@ -9,6 +9,7 @@ mod channels;
 mod chats;
 mod commands;
 mod contacts;
+mod cost;
 mod credential_logins;
 mod files;
 mod managed_vault;
@@ -209,6 +210,7 @@ async fn test_app_state_with_sandbox(disabled: bool) -> (AppState, tempfile::Tem
 fn build_app(state: AppState) -> Router {
     Router::new()
         .merge(routes::admin::router())
+        .merge(routes::cost::router())
         .merge(routes::activity::router())
         .merge(routes::auth::router())
         .merge(routes::browser::router())

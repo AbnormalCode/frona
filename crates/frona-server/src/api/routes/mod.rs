@@ -9,6 +9,7 @@ pub mod chats;
 pub mod commands;
 pub mod config;
 pub mod contacts;
+pub mod cost;
 pub mod credential_logins;
 pub mod files;
 pub mod mcp;

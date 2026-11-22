@@ -216,7 +216,8 @@ describe("metadata-driven provider connections", () => {
     render(<Harness />);
     expect(screen.queryByLabelText("Nova secret *")).not.toBeInTheDocument();
     const first = await add();
-    expect(first.querySelector("select")).toBeNull();
+    // Provider fields use comboboxes; the only native select is the fork's billing control.
+    expect([...first.querySelectorAll("select")].filter((el) => !el.querySelector('option[value="metered"]'))).toEqual([]);
     expect(screen.getByRole("combobox", { name: "Provider brand" })).toHaveValue("Unseen Nova");
     expect(within(first).getByRole("combobox", { name: "Authentication method" })).toHaveValue("API key");
     const handle = within(first).getByLabelText("Connection handle");

@@ -4,7 +4,7 @@ permit(
   principal,
   action == Policy::Action::"invoke_tool",
   resource
-) unless { resource in Policy::ToolGroup::"agent" || resource in Policy::ToolGroup::"policy" };
+) unless { resource in Policy::ToolGroup::"agent" || resource in Policy::ToolGroup::"policy" || resource in Policy::ToolGroup::"cost" };
 
 @id("agent-management")
 @description("Permit agent management tools when the caller is the system agent")
@@ -71,3 +71,10 @@ permit(
   resource
 );
 
+@id("cost-analysis")
+@description("Permit the cost-analysis tools when the caller is the cost-analyst agent. This gate is about which agent may reach the tools; whether the human driving it may see instance-wide spend is re-checked inside each tool against view_usage_analytics, because an invoke_tool principal is an Agent and cannot express that.")
+permit(
+  principal,
+  action == Policy::Action::"invoke_tool",
+  resource in Policy::ToolGroup::"cost"
+) when { principal.handle == "cost-analyst" };
