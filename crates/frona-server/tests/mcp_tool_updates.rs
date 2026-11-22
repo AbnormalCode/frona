@@ -145,6 +145,7 @@ impl Fixture {
                 args: vec![],
                 env: Default::default(),
                 transports: vec![TransportConfig::Http {
+                    headers: Default::default(),
                     args: vec![],
                     env: Default::default(),
                     port_env_var: None,

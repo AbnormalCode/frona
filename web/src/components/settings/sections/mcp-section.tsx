@@ -11,6 +11,8 @@ import {
   ArrowDownTrayIcon,
   CheckCircleIcon,
   ExclamationTriangleIcon,
+  PlusIcon,
+  XMarkIcon,
 } from "@heroicons/react/24/outline";
 import { api } from "@/lib/api-client";
 import { formatDistanceToNow } from "date-fns";
@@ -90,6 +92,46 @@ export function McpSection() {
   const router = useRouter();
   const debounceRef = useRef<ReturnType<typeof setTimeout>>(undefined);
 
+  // Custom (non-registry) install form
+  const [showCustom, setShowCustom] = useState(false);
+  const [installingCustom, setInstallingCustom] = useState(false);
+  const [customMode, setCustomMode] = useState<"local" | "remote">("local");
+  const [customName, setCustomName] = useState("");
+  const [customDescription, setCustomDescription] = useState("");
+  const [customRuntime, setCustomRuntime] = useState<"npm" | "pypi">("npm");
+  const [customIdentifier, setCustomIdentifier] = useState("");
+  const [customVersion, setCustomVersion] = useState("");
+  const [customTransport, setCustomTransport] = useState<"stdio" | "streamable-http" | "sse">("stdio");
+  const [customUrl, setCustomUrl] = useState("");
+  const [customEnv, setCustomEnv] = useState<{ key: string; value: string }[]>([]);
+
+  // Remote server install form (streamable-HTTP/SSE, no local package)
+  const [remoteUrl, setRemoteUrl] = useState("");
+  const [remoteTransport, setRemoteTransport] = useState<"streamable-http" | "sse">("streamable-http");
+  const [remoteAuthMode, setRemoteAuthMode] = useState<"bearer" | "none">("bearer");
+  const [remoteToken, setRemoteToken] = useState("");
+
+  const resetCustomForm = () => {
+    setCustomMode("local");
+    setCustomName("");
+    setCustomDescription("");
+    setCustomRuntime("npm");
+    setCustomIdentifier("");
+    setCustomVersion("");
+    setCustomTransport("stdio");
+    setCustomUrl("");
+    setCustomEnv([]);
+    setRemoteUrl("");
+    setRemoteTransport("streamable-http");
+    setRemoteAuthMode("bearer");
+    setRemoteToken("");
+  };
+
+  const closeCustom = () => {
+    setShowCustom(false);
+    resetCustomForm();
+  };
+
   const reload = useCallback(async () => {
     try {
       const data = await api.get<McpServer[]>("/api/mcp/servers");
@@ -146,6 +188,112 @@ export function McpSection() {
       setActionLoading(null);
     }
   };
+
+  const installCustomLocal = async () => {
+    const name = customName.trim();
+    const identifier = customIdentifier.trim();
+    if (!name || !identifier) {
+      setError("Name and package identifier are required.");
+      return;
+    }
+    setInstallingCustom(true);
+    setError(null);
+    try {
+      const version = customVersion.trim();
+      const url = customUrl.trim();
+      const pkg: Record<string, unknown> = {
+        registry_type: customRuntime,
+        identifier,
+        transport: {
+          type: customTransport,
+          ...(customTransport !== "stdio" && url ? { url } : {}),
+        },
+      };
+      if (version) pkg.version = version;
+
+      const manifest = {
+        name,
+        description: customDescription.trim(),
+        version: version || "0.0.0",
+        packages: [pkg],
+      };
+
+      const extraEnv = Object.fromEntries(
+        customEnv
+          .map((e) => [e.key.trim(), e.value] as const)
+          .filter(([k]) => k.length > 0)
+      );
+
+      const server = await api.post<McpServer>("/api/mcp/servers", {
+        manifest,
+        ...(Object.keys(extraEnv).length > 0 ? { extra_env: extraEnv } : {}),
+      });
+      closeCustom();
+      await reload();
+      router.push(`/mcp?id=${server.id}`);
+    } catch (e: unknown) {
+      setError(e instanceof Error ? e.message : "Install failed");
+    } finally {
+      setInstallingCustom(false);
+    }
+  };
+
+  // Header value templates use `${ENV_VAR}` — resolved from extra_env (or a
+  // vault-bound credential) at connect time, same convention `mcp-remote` uses.
+  const REMOTE_TOKEN_ENV_VAR = "MCP_BEARER_TOKEN";
+
+  const installCustomRemote = async () => {
+    const name = customName.trim();
+    const url = remoteUrl.trim();
+    if (!name || !url) {
+      setError("Name and URL are required.");
+      return;
+    }
+    const token = remoteToken.trim();
+    if (remoteAuthMode === "bearer" && !token) {
+      setError("Enter a bearer token, or switch auth to None.");
+      return;
+    }
+    setInstallingCustom(true);
+    setError(null);
+    try {
+      const extraEnv = Object.fromEntries(
+        customEnv
+          .map((e) => [e.key.trim(), e.value] as const)
+          .filter(([k]) => k.length > 0)
+      );
+
+      const server = await api.post<McpServer>("/api/mcp/servers", {
+        display_name_override: name,
+        remote: {
+          url,
+          transport: remoteTransport,
+          ...(remoteAuthMode === "bearer"
+            ? { headers: { Authorization: `Bearer \${${REMOTE_TOKEN_ENV_VAR}}` } }
+            : {}),
+        },
+        ...(remoteAuthMode === "bearer"
+          ? { extra_env: { ...extraEnv, [REMOTE_TOKEN_ENV_VAR]: token } }
+          : { allow_unauthenticated_remote: true, ...(Object.keys(extraEnv).length > 0 ? { extra_env: extraEnv } : {}) }),
+      });
+      closeCustom();
+      await reload();
+      router.push(`/mcp?id=${server.id}`);
+    } catch (e: unknown) {
+      setError(e instanceof Error ? e.message : "Install failed");
+    } finally {
+      setInstallingCustom(false);
+    }
+  };
+
+  const installCustom = () => (customMode === "remote" ? installCustomRemote() : installCustomLocal());
+
+  const customFormValid =
+    customMode === "remote"
+      ? customName.trim().length > 0 &&
+        remoteUrl.trim().length > 0 &&
+        (remoteAuthMode !== "bearer" || remoteToken.trim().length > 0)
+      : customName.trim().length > 0 && customIdentifier.trim().length > 0;
 
   const start = async (id: string) => {
     setActionLoading(id);
@@ -283,6 +431,264 @@ export function McpSection() {
         );
       })()}
 
+      {/* Custom install dialog */}
+      {showCustom && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center">
+          <div className="absolute inset-0 bg-black/50" onClick={closeCustom} />
+          <div className="relative rounded-xl border border-border bg-surface-secondary p-5 space-y-4 max-w-lg w-full mx-4 shadow-xl max-h-[85vh] overflow-y-auto">
+            <div className="flex items-start justify-between gap-3 border-b border-border pb-3">
+              <div className="flex items-center gap-2">
+                <CpuChipIcon className="h-6 w-6 text-text-tertiary shrink-0" />
+                <h3 className="text-lg font-semibold text-text-primary">Add a custom MCP server</h3>
+              </div>
+              <button
+                onClick={closeCustom}
+                className="flex items-center justify-center h-8 w-8 rounded-lg text-text-secondary hover:text-text-primary hover:bg-surface-tertiary transition"
+              >
+                <XMarkIcon className="h-5 w-5" />
+              </button>
+            </div>
+
+            <p className="text-xs text-text-tertiary">
+              {customMode === "local"
+                ? "Install a server that isn't in the registry by pointing at an npm or PyPI package."
+                : "Connect directly to a remote MCP server over streamable-HTTP or SSE — no package, no local process."}
+            </p>
+
+            <div className="flex rounded-lg border border-border p-0.5">
+              <button
+                type="button"
+                onClick={() => setCustomMode("local")}
+                className={`flex-1 rounded-md px-3 py-1.5 text-xs font-medium transition ${
+                  customMode === "local"
+                    ? "bg-accent text-surface"
+                    : "text-text-secondary hover:text-text-primary"
+                }`}
+              >
+                Local package
+              </button>
+              <button
+                type="button"
+                onClick={() => setCustomMode("remote")}
+                className={`flex-1 rounded-md px-3 py-1.5 text-xs font-medium transition ${
+                  customMode === "remote"
+                    ? "bg-accent text-surface"
+                    : "text-text-secondary hover:text-text-primary"
+                }`}
+              >
+                Remote server
+              </button>
+            </div>
+
+            <div>
+              <label className="block text-xs font-medium text-text-tertiary mb-1">Name</label>
+              <input
+                type="text"
+                value={customName}
+                onChange={(e) => setCustomName(e.target.value)}
+                placeholder="My Custom Server"
+                className="w-full rounded-lg border border-border bg-surface px-3 py-2 text-sm text-text-primary placeholder:text-text-tertiary focus:border-accent focus:outline-none"
+              />
+            </div>
+
+            {customMode === "local" && (
+              <div>
+                <label className="block text-xs font-medium text-text-tertiary mb-1">Description <span className="text-text-tertiary/70">(optional)</span></label>
+                <input
+                  type="text"
+                  value={customDescription}
+                  onChange={(e) => setCustomDescription(e.target.value)}
+                  placeholder="What this server does"
+                  className="w-full rounded-lg border border-border bg-surface px-3 py-2 text-sm text-text-primary placeholder:text-text-tertiary focus:border-accent focus:outline-none"
+                />
+              </div>
+            )}
+
+            {customMode === "local" ? (
+              <>
+                <div className="grid grid-cols-3 gap-2">
+                  <div>
+                    <label className="block text-xs font-medium text-text-tertiary mb-1">Runtime</label>
+                    <select
+                      value={customRuntime}
+                      onChange={(e) => setCustomRuntime(e.target.value as "npm" | "pypi")}
+                      className="w-full rounded-lg border border-border bg-surface px-3 py-2 text-sm text-text-primary focus:border-accent focus:outline-none"
+                    >
+                      <option value="npm">npm</option>
+                      <option value="pypi">PyPI</option>
+                    </select>
+                  </div>
+                  <div className="col-span-2">
+                    <label className="block text-xs font-medium text-text-tertiary mb-1">Package identifier</label>
+                    <input
+                      type="text"
+                      value={customIdentifier}
+                      onChange={(e) => setCustomIdentifier(e.target.value)}
+                      placeholder={customRuntime === "npm" ? "@scope/my-mcp-server" : "my-mcp-server"}
+                      className="w-full rounded-lg border border-border bg-surface px-3 py-2 text-sm text-text-primary placeholder:text-text-tertiary focus:border-accent focus:outline-none"
+                    />
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-2 gap-2">
+                  <div>
+                    <label className="block text-xs font-medium text-text-tertiary mb-1">Version <span className="text-text-tertiary/70">(optional)</span></label>
+                    <input
+                      type="text"
+                      value={customVersion}
+                      onChange={(e) => setCustomVersion(e.target.value)}
+                      placeholder="latest"
+                      className="w-full rounded-lg border border-border bg-surface px-3 py-2 text-sm text-text-primary placeholder:text-text-tertiary focus:border-accent focus:outline-none"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-xs font-medium text-text-tertiary mb-1">Transport</label>
+                    <select
+                      value={customTransport}
+                      onChange={(e) => setCustomTransport(e.target.value as "stdio" | "streamable-http" | "sse")}
+                      className="w-full rounded-lg border border-border bg-surface px-3 py-2 text-sm text-text-primary focus:border-accent focus:outline-none"
+                    >
+                      <option value="stdio">stdio</option>
+                      <option value="streamable-http">streamable-http</option>
+                      <option value="sse">sse</option>
+                    </select>
+                  </div>
+                </div>
+
+                {customTransport !== "stdio" && (
+                  <div>
+                    <label className="block text-xs font-medium text-text-tertiary mb-1">URL <span className="text-text-tertiary/70">(optional)</span></label>
+                    <input
+                      type="text"
+                      value={customUrl}
+                      onChange={(e) => setCustomUrl(e.target.value)}
+                      placeholder="http://localhost:3000/mcp"
+                      className="w-full rounded-lg border border-border bg-surface px-3 py-2 text-sm text-text-primary placeholder:text-text-tertiary focus:border-accent focus:outline-none"
+                    />
+                  </div>
+                )}
+              </>
+            ) : (
+              <>
+                <div className="grid grid-cols-3 gap-2">
+                  <div className="col-span-2">
+                    <label className="block text-xs font-medium text-text-tertiary mb-1">URL</label>
+                    <input
+                      type="text"
+                      value={remoteUrl}
+                      onChange={(e) => setRemoteUrl(e.target.value)}
+                      placeholder="https://example.com/mcp"
+                      className="w-full rounded-lg border border-border bg-surface px-3 py-2 text-sm text-text-primary placeholder:text-text-tertiary focus:border-accent focus:outline-none"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-xs font-medium text-text-tertiary mb-1">Transport</label>
+                    <select
+                      value={remoteTransport}
+                      onChange={(e) => setRemoteTransport(e.target.value as "streamable-http" | "sse")}
+                      className="w-full rounded-lg border border-border bg-surface px-3 py-2 text-sm text-text-primary focus:border-accent focus:outline-none"
+                    >
+                      <option value="streamable-http">streamable-http</option>
+                      <option value="sse">sse</option>
+                    </select>
+                  </div>
+                </div>
+
+                <div>
+                  <label className="block text-xs font-medium text-text-tertiary mb-1">Auth</label>
+                  <select
+                    value={remoteAuthMode}
+                    onChange={(e) => setRemoteAuthMode(e.target.value as "bearer" | "none")}
+                    className="w-full rounded-lg border border-border bg-surface px-3 py-2 text-sm text-text-primary focus:border-accent focus:outline-none"
+                  >
+                    <option value="bearer">Static bearer token</option>
+                    <option value="none">None</option>
+                  </select>
+                </div>
+
+                {remoteAuthMode === "bearer" ? (
+                  <div>
+                    <label className="block text-xs font-medium text-text-tertiary mb-1">Bearer token</label>
+                    <input
+                      type="password"
+                      value={remoteToken}
+                      onChange={(e) => setRemoteToken(e.target.value)}
+                      placeholder="Sent as: Authorization: Bearer <token>"
+                      className="w-full rounded-lg border border-border bg-surface px-3 py-2 text-sm text-text-primary placeholder:text-text-tertiary focus:border-accent focus:outline-none"
+                    />
+                  </div>
+                ) : (
+                  <p className="text-xs text-yellow-500">
+                    No auth header will be sent. Only use this for endpoints that don&apos;t need one.
+                  </p>
+                )}
+              </>
+            )}
+
+            <div>
+              <div className="flex items-center justify-between mb-1">
+                <label className="block text-xs font-medium text-text-tertiary">Environment variables</label>
+                <button
+                  onClick={() => setCustomEnv((prev) => [...prev, { key: "", value: "" }])}
+                  className="inline-flex items-center gap-1 text-xs text-text-secondary hover:text-accent transition"
+                >
+                  <PlusIcon className="h-3.5 w-3.5" />
+                  Add
+                </button>
+              </div>
+              {customEnv.length === 0 ? (
+                <p className="text-xs text-text-tertiary/70">None. Add key/value pairs the server needs at runtime.</p>
+              ) : (
+                <div className="space-y-2">
+                  {customEnv.map((row, i) => (
+                    <div key={i} className="flex items-center gap-2">
+                      <input
+                        type="text"
+                        value={row.key}
+                        onChange={(e) => setCustomEnv((prev) => prev.map((r, j) => (j === i ? { ...r, key: e.target.value } : r)))}
+                        placeholder="API_KEY"
+                        className="w-2/5 rounded-lg border border-border bg-surface px-3 py-2 text-sm font-mono text-text-primary placeholder:text-text-tertiary focus:border-accent focus:outline-none"
+                      />
+                      <input
+                        type="text"
+                        value={row.value}
+                        onChange={(e) => setCustomEnv((prev) => prev.map((r, j) => (j === i ? { ...r, value: e.target.value } : r)))}
+                        placeholder="value"
+                        className="flex-1 rounded-lg border border-border bg-surface px-3 py-2 text-sm text-text-primary placeholder:text-text-tertiary focus:border-accent focus:outline-none"
+                      />
+                      <button
+                        onClick={() => setCustomEnv((prev) => prev.filter((_, j) => j !== i))}
+                        className="rounded-lg p-1.5 text-text-tertiary hover:text-danger hover:bg-danger/10 transition"
+                        title="Remove"
+                      >
+                        <TrashIcon className="h-4 w-4" />
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+
+            <div className="flex gap-2 pt-4">
+              <button
+                onClick={installCustom}
+                disabled={installingCustom || !customFormValid}
+                className="w-32 inline-flex items-center justify-center gap-1.5 rounded-lg bg-accent px-4 py-2 text-sm font-medium text-surface hover:bg-accent-hover disabled:opacity-50 transition"
+              >
+                <ArrowDownTrayIcon className="h-4 w-4" />
+                {installingCustom ? "Installing..." : "Install"}
+              </button>
+              <button
+                onClick={closeCustom}
+                className="w-32 inline-flex items-center justify-center gap-1.5 rounded-lg border border-border px-4 py-2 text-sm font-medium text-text-secondary hover:bg-surface-tertiary transition"
+              >
+                Cancel
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Search */}
       <div className="relative">
         <MagnifyingGlassIcon className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-text-tertiary" />
@@ -298,6 +704,17 @@ export function McpSection() {
             <div className="h-4 w-4 animate-spin rounded-full border-2 border-accent border-t-transparent" />
           </div>
         )}
+      </div>
+
+      {/* Custom install trigger */}
+      <div className="flex justify-end">
+        <button
+          onClick={() => { setError(null); setShowCustom(true); }}
+          className="inline-flex items-center gap-1.5 text-sm text-text-secondary hover:text-accent transition"
+        >
+          <PlusIcon className="h-4 w-4" />
+          Add a custom server
+        </button>
       </div>
 
       {error && (
