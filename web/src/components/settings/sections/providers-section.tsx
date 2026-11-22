@@ -1,12 +1,12 @@
 "use client";
 
 import { useCallback, useEffect, useEffectEvent, useRef, useState, type Dispatch, type SetStateAction } from "react";
-import type { ConfigUpdateResponse, ModelProviderConfig } from "@/lib/config-types";
+import type { ConfigUpdateResponse, ModelProviderConfig, ProviderBilling, ProviderBillingKind } from "@/lib/config-types";
 import { getProviderCatalog, providerAdmin, type CredentialInput, type CredentialMutation, type LoginAttempt,
   type ProviderCatalog, type ProviderCatalogEntry, type ProviderFieldInfo, type ProviderInspection, type ProviderValidation } from "@/lib/provider-admin";
 import { matchingDraft, normalizeProviderHandle, prepareProviderDraft, providerFingerprint, readPointer, writePointer,
   type PreparedProviderDraft, type ProviderDrafts } from "@/lib/provider-drafts";
-import { SectionHeader, SectionPanel, TextInput, Toggle } from "@/components/settings/field";
+import { NumberInput, SectionHeader, SectionPanel, SelectInput, TextInput, Toggle } from "@/components/settings/field";
 import { ComboboxInput } from "@/components/settings/combobox";
 import { CopyButton } from "@/components/ui/copy-button";
 import { CloudIcon, InformationCircleIcon, XMarkIcon } from "@heroicons/react/24/outline";
@@ -104,6 +104,118 @@ interface CardProps {
   onChange: (config: ModelProviderConfig) => void; onRename: (handle: string) => boolean; onRemove: () => void;
   onDraft: (draft?: PreparedProviderDraft) => void; onSaved: (result: ConfigUpdateResponse) => void;
   onRefresh: () => Promise<void>; report: (handle: string, reason: string | null) => void;
+}
+
+/** Local runtimes have no hosted price, so the server classifies them as
+ *  self-hosted when the operator says nothing. Mirrored here so the form shows
+ *  the same default rather than implying pay-as-you-go. */
+function defaultBillingKind(brandId: string): ProviderBillingKind {
+  return brandId === "ollama" || brandId === "llamafile" ? "self_hosted" : "metered";
+}
+
+const BILLING_KIND_OPTIONS = [
+  { value: "metered", label: "Pay as you go (per token)" },
+  { value: "subscription", label: "Subscription (flat fee)" },
+  { value: "self_hosted", label: "Self-hosted (no billing)" },
+];
+
+/** Billing terms. Read only by cost reporting - nothing here affects routing,
+ *  credentials, or which model serves a request. */
+function BillingFields({
+  brandId,
+  billing,
+  disabled,
+  onChange,
+}: {
+  brandId: string;
+  billing: ProviderBilling | null;
+  disabled: boolean;
+  onChange: (billing: ProviderBilling | null) => void;
+}) {
+  const kind = billing?.kind ?? defaultBillingKind(brandId);
+
+  const patch = (fields: Partial<ProviderBilling>) =>
+    onChange({
+      kind,
+      overage_is_metered: billing?.overage_is_metered ?? false,
+      ...billing,
+      ...fields,
+    });
+
+  return (
+    <div className="space-y-4 rounded-lg border border-border/60 bg-surface p-3">
+      <SelectInput
+        label="Billing"
+        description="Used for cost reporting only. A subscription's recorded cost is the list-price value of usage the fee already covers, not money spent — telling the server which is which is what lets it judge whether a plan is worth its fee."
+        value={kind}
+        allowEmpty={false}
+        onChange={(value) => patch({ kind: (value as ProviderBillingKind) ?? defaultBillingKind(brandId) })}
+        options={BILLING_KIND_OPTIONS}
+      />
+
+      {kind === "subscription" && (
+        <>
+          <div className="grid gap-4 sm:grid-cols-2">
+            <NumberInput
+              label="Monthly fee"
+              value={billing?.monthly_cost ?? undefined}
+              onChange={(value) => patch({ monthly_cost: value })}
+              min={0}
+              step={0.01}
+              placeholder="20"
+            />
+            <TextInput
+              label="Currency"
+              description="Display only — no conversion is performed."
+              value={billing?.currency ?? null}
+              onChange={(value) => patch({ currency: value || null })}
+              placeholder="USD"
+              disabled={disabled}
+            />
+          </div>
+
+          <div className="grid gap-4 sm:grid-cols-2">
+            <NumberInput
+              label="Included credit (USD)"
+              description="Allowance at list price, reset each period. Leave blank if the plan has no cap."
+              value={billing?.included_spend_usd ?? undefined}
+              onChange={(value) => patch({ included_spend_usd: value })}
+              min={0}
+              step={0.01}
+              placeholder="20"
+            />
+            <NumberInput
+              label="Included tokens"
+              description="Token allowance, if the plan states one."
+              value={billing?.included_tokens ?? undefined}
+              onChange={(value) => patch({ included_tokens: value })}
+              min={0}
+              step={1}
+              placeholder="1000000"
+            />
+          </div>
+
+          <NumberInput
+            label="Renewal day"
+            description="Day of the month the allowance resets, 1–28."
+            value={billing?.renewal_day ?? undefined}
+            onChange={(value) => patch({ renewal_day: value })}
+            min={1}
+            max={28}
+            step={1}
+            placeholder="1"
+          />
+
+          <Toggle
+            label="Usage past the allowance is billed per token"
+            value={billing?.overage_is_metered ?? false}
+            onChange={(value) => patch({ overage_is_metered: value })}
+            disabled={disabled}
+          />
+        </>
+      )}
+    </div>
+  );
 }
 
 function ConnectionCard({ handle, config, entry, inspection, draft, revision, hasUnsavedChanges, onChange, onRename,
@@ -386,6 +498,10 @@ function ConnectionCard({ handle, config, entry, inspection, draft, revision, ha
     {selected?.fields.map(field => field.target.kind === "configuration" && <Field key={field.id} field={field} value={readPointer(config, field.target.path)} disabled={busy}
       onChange={value => field.target.kind === "configuration" && change(writePointer(config, field.target.path, value))} />)}
     {selected?.interaction === "none" && <p className="text-sm">No credential is required. Validation checks server connectivity.</p>}
+    {/* Billing is display-only for cost reporting - the server ignores it for
+        routing and credentials, so editing it doesn't need to discard an
+        otherwise-still-valid draft or re-trigger validation. */}
+    <BillingFields brandId={entry.id} billing={config.billing ?? null} disabled={busy} onChange={billing => onChange({ ...config, billing })} />
     <div className="flex flex-wrap gap-2">
       {selected?.interaction === "backend_login" && <button className={button} disabled={busy || attempt?.status === "pending"} onClick={() => login("start")}>Connect</button>}
       {attempt?.status === "pending" && <button className={button} disabled={busy} onClick={() => login("cancel")}>Cancel login</button>}

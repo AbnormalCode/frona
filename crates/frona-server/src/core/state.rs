@@ -319,7 +319,8 @@ impl AppState {
             model_catalog,
             SurrealRepo::new(db.clone()),
             broadcast_service.clone(),
-        );
+        )
+        .with_billing_kinds(Arc::new(config.provider_billing_kinds()));
         // Built before the memory backend so PKM receives a *clone* of this exact instance
         // (moka caches are `Arc`-backed, so a clone shares them). One config cache spans the
         // background consolidation sweep and the `/api/memory/pkm/sync/config` route, so a

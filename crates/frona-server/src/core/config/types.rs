@@ -602,6 +602,16 @@ pub struct ModelProviderConfig {
     )]
     #[schemars(description = "Whether this provider is enabled.")]
     pub enabled: bool,
+    /// How this provider charges. Purely descriptive - nothing on the inference
+    /// path reads it. It exists so cost analysis can tell money that actually
+    /// left the account (metered) from usage covered by a flat fee already paid
+    /// (subscription) or by hardware you own (self-hosted). `None` means
+    /// "unstated", which `effective_billing` resolves per provider.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[schemars(
+        description = "How this provider bills you. Optional; affects cost reporting only, never routing."
+    )]
+    pub billing: Option<ProviderBilling>,
     #[schemars(description = "Provider brand. Legacy entries infer it from the map key.")]
     pub provider: Option<String>,
     #[schemars(description = "Compiled logical adapter used for dynamic or direct-YAML brands.")]
@@ -628,6 +638,123 @@ impl std::fmt::Debug for ModelProviderConfig {
 impl Default for ModelProviderConfig {
     fn default() -> Self {
         frona_harness::config::ModelProviderConfig::default().into()
+    }
+}
+
+impl ModelProviderConfig {
+    /// The billing terms to reason about for `provider_name`, filling in the
+    /// unambiguous cases when the operator stated nothing.
+    ///
+    /// A local runtime has no hosted price at all - models.dev files no `cost`
+    /// for it, so every call already records `cost_usd: None` - and charging it
+    /// at some notional list rate would be fiction. Everything else defaults to
+    /// metered, which is exactly how the whole codebase behaved before this
+    /// field existed.
+    pub fn effective_billing(&self, provider_name: &str) -> ProviderBilling {
+        self.billing.clone().unwrap_or_else(|| ProviderBilling {
+            kind: ProviderBillingKind::default_for_provider(provider_name),
+            ..ProviderBilling::default()
+        })
+    }
+}
+
+/// How an operator pays for a provider.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Deserialize, Serialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum ProviderBillingKind {
+    /// Billed per token at the published rate. Recorded `cost_usd` is real spend.
+    #[default]
+    Metered,
+    /// A flat recurring fee, optionally with an allowance. Recorded `cost_usd`
+    /// is the list-price *value* of what was consumed, not money spent.
+    Subscription,
+    /// You run it (Ollama, llamafile, your own vLLM). Marginal cost is hardware
+    /// and electricity, neither of which this codebase can see.
+    SelfHosted,
+}
+
+impl ProviderBillingKind {
+    /// Local runtimes are unambiguous enough to classify without being told.
+    pub fn default_for_provider(provider_name: &str) -> Self {
+        match provider_name {
+            "ollama" | "llamafile" => Self::SelfHosted,
+            _ => Self::Metered,
+        }
+    }
+
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::Metered => "metered",
+            Self::Subscription => "subscription",
+            Self::SelfHosted => "self_hosted",
+        }
+    }
+
+    /// Parse a persisted `billing_kind`. An empty string is a usage row written
+    /// before this field existed; every provider was metered then, so that is
+    /// what it means now.
+    pub fn from_str_or_metered(s: &str) -> Self {
+        match s {
+            "subscription" => Self::Subscription,
+            "self_hosted" => Self::SelfHosted,
+            _ => Self::Metered,
+        }
+    }
+}
+
+/// Billing terms for one provider. Every field bar `kind` is optional: an
+/// operator who only knows "this one is a subscription" still gets useful
+/// analysis, just without allowance arithmetic.
+#[derive(Debug, Clone, Default, PartialEq, Deserialize, Serialize, JsonSchema)]
+#[serde(default)]
+pub struct ProviderBilling {
+    #[schemars(
+        description = "metered (pay per token), subscription (flat recurring fee), or self_hosted (you run it)."
+    )]
+    pub kind: ProviderBillingKind,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[schemars(description = "Recurring fee per billing period, in `currency`.")]
+    pub monthly_cost: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[schemars(
+        description = "ISO currency code the fee is charged in, e.g. 'GBP'. Display only - no conversion is performed. Defaults to USD."
+    )]
+    pub currency: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[schemars(description = "Token allowance included in the fee, reset each period.")]
+    pub included_tokens: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[schemars(
+        description = "Credit allowance included in the fee, in USD at list price, reset each period."
+    )]
+    pub included_spend_usd: Option<f64>,
+    #[serde(deserialize_with = "deserialize_bool_from_anything")]
+    #[schemars(description = "Whether usage past the allowance is billed per token at list rate.")]
+    pub overage_is_metered: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[schemars(description = "Day of month the allowance resets, 1-28.")]
+    pub renewal_day: Option<u8>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[schemars(description = "Free-text note for whoever reads the cost report.")]
+    pub notes: Option<String>,
+}
+
+impl ProviderBilling {
+    pub fn currency_or_usd(&self) -> &str {
+        self.currency.as_deref().unwrap_or("USD")
+    }
+
+    /// The fee attributable to a window of `days`, assuming a 30-day period.
+    /// Approximate on purpose: pro-rating a monthly fee onto an arbitrary
+    /// window has no exact answer, and a cost report is a decision aid rather
+    /// than an invoice.
+    pub fn prorated_cost(&self, days: f64) -> f64 {
+        match self.kind {
+            ProviderBillingKind::Subscription => {
+                self.monthly_cost.unwrap_or(0.0) * (days / 30.0).clamp(0.0, f64::MAX)
+            }
+            _ => 0.0,
+        }
     }
 }
 
@@ -1128,6 +1255,7 @@ impl From<frona_harness::config::ModelProviderConfig> for ModelProviderConfig {
             api_key: value.api_key,
             base_url: value.base_url,
             enabled: value.enabled,
+            billing: None,
             provider: value.provider,
             adapter: value.adapter,
             aws_profile: value.aws_profile,

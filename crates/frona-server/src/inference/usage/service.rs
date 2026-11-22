@@ -2,11 +2,15 @@
 //! `record()`, which persists the row, emits Prometheus metrics, and
 //! dispatches the SSE event.
 
+use std::collections::HashMap;
+use std::sync::Arc;
+
 use chrono::Utc;
 use metrics::{counter, gauge, histogram};
 use rig_core::completion::request::Usage;
 
 use crate::chat::broadcast::BroadcastService;
+use crate::core::config::ProviderBillingKind;
 use crate::core::repository::{Repository, new_id};
 use crate::{db::repo::generic::SurrealRepo, inference::usage::UsageContext};
 use frona_harness::inference::provider::ModelConfig;
@@ -74,6 +78,11 @@ pub struct UsageService {
     catalog: ModelCatalogStore,
     repo: SurrealRepo<InferenceUsage>,
     broadcast: BroadcastService,
+    /// Billing kind per provider name, snapshotted from config at boot (see
+    /// `Config::provider_billing_kinds`). Providers absent from the map fall
+    /// back to `ProviderBillingKind::default_for_provider`, which keeps a
+    /// provider reached without an explicit config entry classified sensibly.
+    billing_kinds: Arc<HashMap<String, ProviderBillingKind>>,
 }
 
 impl UsageService {
@@ -94,7 +103,22 @@ impl UsageService {
             catalog,
             repo,
             broadcast,
+            billing_kinds: Arc::default(),
         }
+    }
+
+    /// Supply the per-provider billing classification stamped onto every row.
+    pub fn with_billing_kinds(mut self, kinds: Arc<HashMap<String, ProviderBillingKind>>) -> Self {
+        self.billing_kinds = kinds;
+        self
+    }
+
+    /// How the provider serving `provider_name` bills, per config at boot.
+    fn billing_kind(&self, provider_name: &str) -> ProviderBillingKind {
+        self.billing_kinds
+            .get(provider_name)
+            .copied()
+            .unwrap_or_else(|| ProviderBillingKind::default_for_provider(provider_name))
     }
 
     /// The only way to record an inference call.
@@ -119,8 +143,11 @@ impl UsageService {
             usage,
             fallback_index,
             latency,
-            cost_usd,
-            pricing_version,
+            PricingSnapshot {
+                cost_usd,
+                pricing_version,
+                billing_kind: self.billing_kind(model_ref.provider_name()),
+            },
         );
 
         // Persistence failure logs but never propagates - observability never
@@ -225,14 +252,23 @@ fn emit_metrics(row: &InferenceUsage) {
     }
 }
 
+/// What was known about price when a row was written, kept together because
+/// the three are only ever meaningful as a set: a `cost_usd` says nothing
+/// without the catalogue version it came from and the billing regime it was
+/// charged under.
+struct PricingSnapshot {
+    cost_usd: Option<f64>,
+    pricing_version: String,
+    billing_kind: ProviderBillingKind,
+}
+
 fn build_row(
     usage_ctx: &UsageContext,
     model_ref: &ModelConfig,
     usage: &Usage,
     fallback_index: u8,
     latency: LatencyMetrics,
-    cost_usd: Option<f64>,
-    pricing_version: String,
+    pricing: PricingSnapshot,
 ) -> InferenceUsage {
     let kind = &usage_ctx.kind;
     let output_tokens_per_second = usage
@@ -261,8 +297,9 @@ fn build_row(
         output_tokens_per_second,
         retry_overhead_ms: latency.retry_overhead_ms,
         retry_count: latency.retry_count,
-        cost_usd,
-        pricing_version,
+        cost_usd: pricing.cost_usd,
+        pricing_version: pricing.pricing_version,
+        billing_kind: pricing.billing_kind.as_str().to_string(),
         created_at: Utc::now(),
     }
 }

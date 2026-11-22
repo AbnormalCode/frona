@@ -404,3 +404,71 @@ fn strip_defaults_removes_model_group_entry_defaults() {
         })
     );
 }
+
+#[test]
+fn a_provider_config_without_billing_deserializes() {
+    let cfg: ModelProviderConfig =
+        serde_yaml::from_str("api_key: sk-123\nenabled: true").expect("parses");
+    assert!(cfg.billing.is_none());
+    assert_eq!(
+        cfg.effective_billing("openai").kind,
+        ProviderBillingKind::Metered
+    );
+}
+
+#[test]
+fn a_provider_config_with_billing_deserializes() {
+    let cfg: ModelProviderConfig = serde_yaml::from_str(
+            "api_key: sk-123\nbilling:\n  kind: subscription\n  monthly_cost: 20\n  currency: GBP\n  included_spend_usd: 20\n  overage_is_metered: true\n",
+        )
+        .expect("parses");
+    let billing = cfg.effective_billing("anthropic");
+    assert_eq!(billing.kind, ProviderBillingKind::Subscription);
+    assert_eq!(billing.monthly_cost, Some(20.0));
+    assert_eq!(billing.currency_or_usd(), "GBP");
+    assert!(billing.overage_is_metered);
+}
+
+/// A provider whose billing an operator has stated must survive
+/// `strip_defaults` — that is the round-trip `PUT /api/config` performs on
+/// every save, and silently dropping the block would reclassify a
+/// subscription as pay-as-you-go the next time settings were touched.
+#[test]
+fn strip_defaults_preserves_a_declared_billing_block() {
+    let mut value = serde_json::json!({
+        "providers": {
+            "anthropic": {
+                "api_key": "sk-123",
+                "enabled": true,
+                "billing": { "kind": "subscription", "monthly_cost": 20.0, "overage_is_metered": false },
+            },
+        },
+    });
+    strip_defaults(&mut value);
+    assert_eq!(
+        value,
+        serde_json::json!({
+            "providers": {
+                "anthropic": {
+                    "api_key": "sk-123",
+                    "billing": { "kind": "subscription", "monthly_cost": 20.0, "overage_is_metered": false },
+                },
+            },
+        })
+    );
+}
+
+/// The other half: a config that never mentioned billing must come back
+/// out exactly as it went in, so adding the field changes nothing for
+/// existing installs.
+#[test]
+fn strip_defaults_leaves_a_config_without_billing_untouched() {
+    let mut value = serde_json::json!({
+        "providers": { "openai": { "api_key": "sk-123", "enabled": true } },
+    });
+    strip_defaults(&mut value);
+    assert_eq!(
+        value,
+        serde_json::json!({ "providers": { "openai": { "api_key": "sk-123" } } })
+    );
+}

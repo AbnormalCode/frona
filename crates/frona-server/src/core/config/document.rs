@@ -1,6 +1,21 @@
 use super::*;
 use frona_harness::config::ModelGroupConfig;
 
+impl Config {
+    /// Billing kind per configured provider name, for the cost-reporting path.
+    ///
+    /// Snapshotted rather than read live: the provider registry itself is built
+    /// from this config at boot and a provider change needs a restart to take
+    /// effect, so a live read would only ever disagree with what actually
+    /// served the call.
+    pub fn provider_billing_kinds(&self) -> std::collections::HashMap<String, ProviderBillingKind> {
+        self.providers
+            .iter()
+            .map(|(name, cfg)| (name.to_string(), cfg.effective_billing(name.as_str()).kind))
+            .collect()
+    }
+}
+
 /// Paths to sensitive config fields. Used for both log redaction and API response masking.
 pub const SENSITIVE_PATHS: &[&[&str]] = &[
     &["auth", "encryption_secret"],

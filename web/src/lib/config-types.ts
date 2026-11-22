@@ -174,7 +174,22 @@ export interface ModelGroupConfig {
   [key: string]: unknown;
 }
 
+export type ProviderBillingKind = "metered" | "subscription" | "self_hosted";
+
+export interface ProviderBilling {
+  kind: ProviderBillingKind;
+  monthly_cost?: number | null;
+  currency?: string | null;
+  included_tokens?: number | null;
+  included_spend_usd?: number | null;
+  overage_is_metered: boolean;
+  renewal_day?: number | null;
+  notes?: string | null;
+}
+
 export interface ModelProviderConfig {
+  /** How this provider charges. Affects cost reporting only, never routing. */
+  billing?: ProviderBilling | null;
   credential_id?: string | null;
   provider?: string;
   adapter?: string;

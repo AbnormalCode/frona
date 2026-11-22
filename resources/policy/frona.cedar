@@ -62,3 +62,12 @@ permit(
   action in [Policy::Action::"list_users", Policy::Action::"manage_users"],
   resource
 );
+
+@id("admin-cost-analytics")
+@description("Members of the 'admins' user group may read instance-wide usage and cost. Kept separate from admin-user-management so an operator can grant spend visibility to, say, a finance group without also granting account administration.")
+permit(
+  principal in Policy::UserGroup::"admins",
+  action == Policy::Action::"view_usage_analytics",
+  resource
+);
+

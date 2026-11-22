@@ -1,5 +1,9 @@
 export interface UserPermissions {
   list_users: boolean;
+  /** May read instance-wide usage and cost. Like `list_users` this is the
+   *  Cedar decision rather than raw group membership, so a custom policy can
+   *  grant it to a non-admin group. */
+  view_usage_analytics: boolean;
   is_admin: boolean;
 }
 

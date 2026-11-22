@@ -58,6 +58,11 @@ pub enum PolicyAction {
     ManageUsers {
         target_user_id: String,
     },
+    /// Read instance-wide inference usage and cost - every user's spend, not
+    /// just your own. Separate from `ListUsers` so an operator can grant
+    /// spend visibility without granting account administration, or the
+    /// reverse.
+    ViewUsageAnalytics,
 }
 
 #[derive(Debug, Clone)]
@@ -107,6 +112,7 @@ impl PolicyAction {
             PolicyAction::ReceiveSignal { .. } => "receive_signal",
             PolicyAction::ReceiveMessage { .. } => "receive_message",
             PolicyAction::ListUsers => "list_users",
+            PolicyAction::ViewUsageAnalytics => "view_usage_analytics",
             PolicyAction::ManageUsers { .. } => "manage_users",
         }
     }
