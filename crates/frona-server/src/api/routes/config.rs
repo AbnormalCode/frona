@@ -260,6 +260,7 @@ mod tests {
         .unwrap();
         let repository: SurrealRepo<User> = SurrealRepo::new(db);
         let ordinary = User {
+            phone: None,
             id: "ordinary".into(),
             handle: Handle::const_validated("ordinary"),
             email: "ordinary@test.invalid".into(),

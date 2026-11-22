@@ -42,6 +42,7 @@ pub async fn build_user_info(
         email: user.email,
         name: user.name,
         timezone: user.timezone,
+        phone: user.phone.clone(),
         needs_setup,
         permissions: UserPermissions {
             list_users: list_users.allowed,
@@ -58,6 +59,11 @@ pub trait UserRepository: Repository<User> {
     async fn find_any_active_admin(&self) -> Result<Option<User>, AppError>;
     async fn find_oldest_active(&self) -> Result<Option<User>, AppError>;
     async fn list_all(&self, include_deactivated: bool) -> Result<Vec<User>, AppError>;
+    /// Active users that have a phone number set. Phone numbers are stored in
+    /// whatever format the user typed, so an exact SQL match is unreliable —
+    /// callers still compare via `normalize_phone`. This narrows the candidate
+    /// set to rows that can possibly match instead of scanning every user.
+    async fn find_all_with_phone(&self) -> Result<Vec<User>, AppError>;
 }
 
 pub fn can_create_users(config: &Config) -> bool {
@@ -92,6 +98,7 @@ impl AuthService {
         let password_hash = self.hash_password(&req.password)?;
         let now = chrono::Utc::now();
         let user = User {
+            phone: None,
             id: crate::core::repository::new_id(),
             handle,
             email,
@@ -398,6 +405,7 @@ impl AuthService {
         }
 
         user.timezone = req.timezone.filter(|s| !s.is_empty());
+        user.phone = req.phone.filter(|s| !s.is_empty());
         user.updated_at = chrono::Utc::now();
         user_service.update(&user).await?;
 

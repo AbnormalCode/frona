@@ -10,6 +10,7 @@ export interface UserInfo {
   email: string;
   name: string;
   timezone?: string;
+  phone?: string;
   needs_setup?: boolean;
   permissions?: UserPermissions;
 }
@@ -72,6 +73,9 @@ export interface Agent {
   skills: string[];
   avatar_url: string | null;
   identity: Record<string, string>;
+  /** TTS voice for live phone calls this agent answers or is transferred
+   *  into. `null` falls back to the server's default voice. */
+  voice_id: string | null;
   sandbox_policy: SandboxPolicy;
   sandbox_limits: SandboxLimits | null;
   prompt: string | null;

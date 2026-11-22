@@ -569,6 +569,7 @@ async fn seed_user_and_system_agent(db: &Surreal<Db>) {
     let now = chrono::Utc::now();
     SurrealRepo::<frona::auth::User>::new(db.clone())
         .create(&frona::auth::User {
+            phone: None,
             id: U.into(),
             handle: frona::handle!("testuser"),
             email: "t@t.com".into(),
@@ -584,6 +585,7 @@ async fn seed_user_and_system_agent(db: &Surreal<Db>) {
         .unwrap();
     SurrealRepo::<frona::agent::models::Agent>::new(db.clone())
         .create(&frona::agent::models::Agent {
+            voice_id: None,
             id: "sys-agent".into(),
             user_id: U.into(),
             handle: frona::handle!("system"),

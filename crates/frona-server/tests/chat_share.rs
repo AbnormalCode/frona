@@ -25,6 +25,7 @@ fn test_user_service(db: &Surreal<Db>) -> frona::auth::UserService {
 async fn seed_user(user_service: &frona::auth::UserService, id: &str) {
     let _ = user_service
         .create(&frona::auth::User {
+            phone: None,
             id: id.into(),
             handle: frona::core::Handle::try_new(id).expect("valid handle"),
             email: format!("{id}@example.com"),

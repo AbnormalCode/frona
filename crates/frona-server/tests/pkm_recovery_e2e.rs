@@ -162,6 +162,7 @@ async fn setup(
     state
         .user_service
         .create(&frona::auth::User {
+            phone: None,
             id: USER.into(),
             handle: frona::handle!("testuser"),
             email: "user@example.test".into(),
@@ -221,6 +222,7 @@ async fn setup(
 async fn seed_agent(db: &Surreal<Db>) {
     let _ = SurrealRepo::<frona::agent::models::Agent>::new(db.clone())
         .create(&frona::agent::models::Agent {
+            voice_id: None,
             id: "a1".into(),
             user_id: USER.into(),
             handle: frona::handle!("assistant"),

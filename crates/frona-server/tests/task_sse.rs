@@ -212,6 +212,7 @@ fn make_task() -> Task {
 /// resolve it.
 async fn seed_agent(db: &Surreal<Db>) {
     let agent = frona::agent::models::Agent {
+        voice_id: None,
         id: "test-agent".to_string(),
         user_id: "user-1".to_string(),
         handle: frona::handle!("test-agent"),
@@ -238,6 +239,7 @@ async fn seed_agent(db: &Surreal<Db>) {
 /// Create a minimal user in the DB.
 async fn seed_user(db: &Surreal<Db>) {
     let user = frona::auth::User {
+        phone: None,
         id: "user-1".to_string(),
         handle: frona::handle!("testuser"),
         email: "test@test.com".to_string(),

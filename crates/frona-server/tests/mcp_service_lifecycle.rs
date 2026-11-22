@@ -664,6 +664,7 @@ async fn next_start_receives_replaced_environment_and_retains_bound_credentials(
     let now = chrono::Utc::now();
     SurrealRepo::new(db.clone())
         .create(&frona::auth::User {
+            phone: None,
             id: "user1".into(),
             handle: frona::handle!("user1"),
             email: "user1@example.com".into(),

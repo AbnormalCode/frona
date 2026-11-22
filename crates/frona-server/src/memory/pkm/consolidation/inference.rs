@@ -209,6 +209,7 @@ mod tests {
         let app = crate::app_state_fixture::build(&db).await;
         SurrealRepo::<User>::new(db.clone())
             .create(&User {
+                phone: None,
                 id: "u1".into(),
                 handle: crate::handle!("owner"),
                 email: "owner@example.test".into(),

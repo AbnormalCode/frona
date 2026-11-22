@@ -153,6 +153,7 @@ async fn seed_user_and_two_agents(state: &AppState) -> (String, String) {
     let _ = state
         .user_service
         .create(&User {
+            phone: None,
             id: "user-1".into(),
             handle: frona::handle!("user-1"),
             email: "user-1@test.com".into(),
@@ -168,6 +169,7 @@ async fn seed_user_and_two_agents(state: &AppState) -> (String, String) {
 
     let repo = SurrealAgentRepo::new(state.db.clone());
     let default_agent = Agent {
+        voice_id: None,
         id: "agent-default".into(),
         user_id: "user-1".into(),
         handle: frona::handle!("default"),

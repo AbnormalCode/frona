@@ -22,7 +22,9 @@ export function ProfileSection() {
   const { user, revalidate } = useAuth();
   const { mode, setMode } = useTheme();
   const [timezone, setTimezone] = useState(user?.timezone ?? "");
+  const [phone, setPhone] = useState(user?.phone ?? "");
   const [saving, setSaving] = useState(false);
+  const [savingPhone, setSavingPhone] = useState(false);
   const [timezones, setTimezones] = useState<string[]>([]);
   const [serverTimezone, setServerTimezone] = useState<string>("");
 
@@ -52,10 +54,23 @@ export function ProfileSection() {
     if (!timezones.includes(tz)) return;
     setSaving(true);
     try {
-      await api.put("/api/auth/profile", { timezone: tz || null });
+      // Always send the full profile: the backend treats a missing field as
+      // "clear it", so a partial save would wipe the other one.
+      await api.put("/api/auth/profile", { timezone: tz || null, phone: phone || null });
       await revalidate();
     } finally {
       setSaving(false);
+    }
+  };
+
+  const savePhone = async () => {
+    if (phone === (user?.phone ?? "")) return;
+    setSavingPhone(true);
+    try {
+      await api.put("/api/auth/profile", { timezone: timezone || null, phone: phone || null });
+      await revalidate();
+    } finally {
+      setSavingPhone(false);
     }
   };
 
@@ -109,6 +124,25 @@ export function ProfileSection() {
               )}
               {saving && (
                 <p className="text-xs text-text-tertiary">Saving...</p>
+              )}
+            </div>
+
+            <div>
+              <label className="block text-xs font-medium text-text-tertiary mb-1">Phone</label>
+              <input
+                type="tel"
+                value={phone}
+                onChange={(e) => setPhone(e.target.value)}
+                onBlur={savePhone}
+                onKeyDown={(e) => { if (e.key === "Enter") e.currentTarget.blur(); }}
+                placeholder="+44 7xxx xxx xxx"
+                className="w-full rounded-lg border border-border bg-surface px-3 py-2 text-sm text-text-primary placeholder:text-text-tertiary focus:border-accent focus:outline-none"
+              />
+              <p className="text-xs text-text-tertiary mt-1">
+                Used to recognise you when you phone your agents.
+              </p>
+              {savingPhone && (
+                <p className="text-xs text-text-tertiary mt-1">Saving...</p>
               )}
             </div>
 

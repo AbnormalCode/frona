@@ -325,6 +325,7 @@ impl OAuthService {
         let handle = AuthService::generate_unique_handle(user_service, &base_handle).await?;
 
         let new_user = User {
+            phone: None,
             id: crate::core::repository::new_id(),
             handle,
             email: external_email

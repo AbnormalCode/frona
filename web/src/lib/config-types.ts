@@ -85,6 +85,15 @@ export interface VoiceConfig {
   twilio_from_number: string | null;
   twilio_voice_id: string | null;
   twilio_speech_model: string | null;
+  twilio_tts_provider: string | null;
+  twilio_elevenlabs_text_normalization: string | null;
+  twilio_language: string | null;
+  twilio_interrupt_sensitivity: string | null;
+  inbound_enabled: boolean;
+  inbound_welcome_greeting: string | null;
+  transcription_provider: string | null;
+  transcription_model: string | null;
+  transcription_language: string | null;
 }
 
 export interface VaultConfig {

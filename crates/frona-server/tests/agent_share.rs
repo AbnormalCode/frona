@@ -39,6 +39,7 @@ fn test_policy_service(db: &Surreal<Db>) -> PolicyService {
 async fn seed_user(user_service: &frona::auth::UserService, id: &str) {
     let _ = user_service
         .create(&frona::auth::User {
+            phone: None,
             id: id.into(),
             handle: frona::core::Handle::try_new(id).expect("valid handle"),
             email: format!("{id}@example.com"),
@@ -62,6 +63,7 @@ async fn test_db() -> Surreal<Db> {
 async fn seed_agent(db: &Surreal<Db>, owner_id: &str) -> Agent {
     let now = Utc::now();
     let agent = Agent {
+        voice_id: None,
         id: frona::core::repository::new_id(),
         user_id: owner_id.to_string(),
         handle: frona::core::Handle::try_new("shared-agent").unwrap(),

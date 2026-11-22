@@ -18,6 +18,8 @@ pub struct User {
     #[serde(default)]
     pub timezone: Option<String>,
     #[serde(default)]
+    pub phone: Option<String>,
+    #[serde(default)]
     #[surreal(default)]
     pub groups: Vec<String>,
     #[serde(default)]
@@ -90,6 +92,8 @@ pub struct UserInfo {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub timezone: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub phone: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub needs_setup: Option<bool>,
     #[serde(default)]
     pub permissions: UserPermissions,
@@ -109,6 +113,7 @@ pub struct UpdateHandleRequest {
 #[derive(Debug, Deserialize)]
 pub struct UpdateProfileRequest {
     pub timezone: Option<String>,
+    pub phone: Option<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]

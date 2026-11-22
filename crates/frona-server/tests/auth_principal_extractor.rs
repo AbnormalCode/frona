@@ -36,6 +36,7 @@ async fn setup() -> (TokenService, KeyPairService, User, tempfile::TempDir) {
         604_800,
     );
     let user = User {
+        phone: None,
         id: "user-zzz".into(),
         handle: frona::handle!("bob"),
         email: "b@example.com".into(),

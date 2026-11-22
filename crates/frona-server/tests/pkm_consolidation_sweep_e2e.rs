@@ -120,6 +120,7 @@ async fn setup_with_memory_config(
     state
         .user_service
         .create(&frona::auth::User {
+            phone: None,
             id: "u1".into(),
             handle: frona::handle!("testuser"),
             email: "casey@example.com".into(),
@@ -186,6 +187,7 @@ async fn setup_with_memory_config(
 async fn seed_agent(db: &Surreal<Db>) {
     let _ = SurrealRepo::<frona::agent::models::Agent>::new(db.clone())
         .create(&frona::agent::models::Agent {
+            voice_id: None,
             id: "a1".into(),
             user_id: "u1".into(),
             handle: frona::handle!("assistant"),

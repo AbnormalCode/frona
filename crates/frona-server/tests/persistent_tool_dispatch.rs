@@ -62,6 +62,7 @@ async fn setup() -> (helpers::app_state::Fixture, InferenceContext, String) {
     let fixture = helpers::app_state::build(&db).await;
     let now = chrono::Utc::now();
     let user = User {
+        phone: None,
         id: "user-1".into(),
         handle: frona::handle!("user-1"),
         email: "u@example.com".into(),
@@ -75,6 +76,7 @@ async fn setup() -> (helpers::app_state::Fixture, InferenceContext, String) {
     };
     fixture.state.user_service.create(&user).await.unwrap();
     let agent = Agent {
+        voice_id: None,
         id: "agent-1".into(),
         user_id: user.id.clone(),
         handle: frona::handle!("agent-1"),

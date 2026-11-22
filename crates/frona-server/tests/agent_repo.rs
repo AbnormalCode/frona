@@ -45,6 +45,7 @@ fn test_user_service(db: &Surreal<Db>) -> frona::auth::UserService {
 async fn seed_user(user_service: &frona::auth::UserService, id: &str) {
     let _ = user_service
         .create(&frona::auth::User {
+            phone: None,
             id: id.into(),
             handle: frona::core::Handle::try_new(id).expect("test user id must be valid handle"),
             email: format!("{id}@example.com"),
@@ -68,6 +69,7 @@ async fn test_db() -> Surreal<Db> {
 fn test_agent(user_id: &str) -> Agent {
     let now = Utc::now();
     Agent {
+        voice_id: None,
         id: frona::core::repository::new_id(),
         user_id: user_id.to_string(),
         handle: frona::core::Handle::try_new(format!(
@@ -205,6 +207,7 @@ async fn test_clone_all_builtins_materializes_per_user_rows() {
     let user_service = test_user_service(&db);
     user_service
         .create(&frona::auth::User {
+            phone: None,
             id: "user-a".into(),
             handle: frona::handle!("user-a"),
             email: "a@example.com".into(),
@@ -295,6 +298,7 @@ async fn agent_service_update_invalidates_cache() {
         "user-1",
         &agent.id,
         UpdateAgentRequest {
+            voice_id: None,
             name: Some("Renamed".to_string()),
             description: None,
             model_group: None,

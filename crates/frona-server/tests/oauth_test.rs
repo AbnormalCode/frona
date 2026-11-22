@@ -132,6 +132,7 @@ async fn test_email_matching_flow() {
 
     let now = Utc::now();
     let user = User {
+        phone: None,
         id: frona::core::repository::new_id(),
         handle: frona::handle!("existinguser"),
         email: "existing@example.com".to_string(),

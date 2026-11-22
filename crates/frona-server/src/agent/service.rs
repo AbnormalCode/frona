@@ -177,6 +177,7 @@ impl AgentService {
             enabled: true,
             skills: req.skills,
             sandbox_limits: req.sandbox_limits,
+            voice_id: req.voice_id,
             max_concurrent_tasks: None,
             avatar: None,
             identity: std::collections::BTreeMap::new(),
@@ -298,6 +299,13 @@ impl AgentService {
         }
         if let Some(model_group) = req.model_group {
             agent.model_group = model_group;
+        }
+        if let Some(voice_id) = req.voice_id {
+            agent.voice_id = if voice_id.trim().is_empty() {
+                None
+            } else {
+                Some(voice_id)
+            };
         }
         if let Some(enabled) = req.enabled {
             agent.enabled = enabled;
@@ -476,6 +484,7 @@ impl AgentService {
             enabled: true,
             skills: None,
             sandbox_limits: None,
+            voice_id: None,
             max_concurrent_tasks: None,
             avatar: None,
             identity: std::collections::BTreeMap::new(),

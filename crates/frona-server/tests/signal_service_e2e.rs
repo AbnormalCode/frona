@@ -158,6 +158,7 @@ async fn seed_user_and_agent(state: &AppState, user_id: &str, agent_id: &str) {
     let user_repo: SurrealRepo<User> = SurrealRepo::new(state.db.clone());
     user_repo
         .create(&User {
+            phone: None,
             id: user_id.into(),
             handle: frona::handle!("test-user"),
             email: format!("{user_id}@test.com"),
@@ -175,6 +176,7 @@ async fn seed_user_and_agent(state: &AppState, user_id: &str, agent_id: &str) {
     let agent_repo: SurrealRepo<Agent> = SurrealRepo::new(state.db.clone());
     agent_repo
         .create(&Agent {
+            voice_id: None,
             id: agent_id.into(),
             user_id: user_id.into(),
             handle: frona::handle!("test-agent"),

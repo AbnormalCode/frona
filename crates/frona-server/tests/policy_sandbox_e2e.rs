@@ -74,6 +74,7 @@ async fn setup() -> (Surreal<Db>, PolicyService) {
     );
     user_service
         .create(&frona::auth::User {
+            phone: None,
             id: "user-1".into(),
             handle: frona::handle!("user-1"),
             email: "u1@example.com".into(),

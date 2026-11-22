@@ -149,6 +149,7 @@ async fn twilio_callback_valid_token_returns_xml() {
     // Persist the user so the AppState's token_service can round-trip the token
     // through the ApiToken DB row it creates for access tokens.
     let user = User {
+        phone: None,
         id: "user-123".to_string(),
         handle: frona::handle!("testuser"),
         email: "test@example.com".to_string(),

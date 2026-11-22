@@ -80,6 +80,7 @@ async fn seed_chat_sources(
     let agent_id = format!("agent-{user_id}");
     SurrealRepo::<frona::agent::models::Agent>::new(db.clone())
         .create(&frona::agent::models::Agent {
+            voice_id: None,
             id: agent_id.clone(),
             user_id: user_id.into(),
             handle: frona::handle!("memory-agent"),

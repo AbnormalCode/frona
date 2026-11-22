@@ -2,16 +2,27 @@
 
 import type { VoiceConfig } from "@/lib/config-types";
 import { isSensitiveSet } from "@/lib/config-types";
-import { TextInput, SelectInput, SensitiveInput, SectionHeader, SectionPanel } from "@/components/settings/field";
-import { PhoneIcon } from "@heroicons/react/24/outline";
+import { TextInput, SelectInput, SensitiveInput, Toggle, SectionHeader, SectionPanel } from "@/components/settings/field";
+import { MicrophoneIcon, PhoneIcon } from "@heroicons/react/24/outline";
+import { useState, useEffect, useCallback } from "react";
+import { api } from "@/lib/api-client";
+
+interface AllowlistEntry {
+  phone: string;
+  name?: string;
+}
 
 interface VoiceSectionProps {
   voice: VoiceConfig;
   onChange: (voice: VoiceConfig) => void;
 }
 
-const voiceProviders = [
-  { value: "twilio", label: "Twilio" },
+const voiceProviders = [{ value: "twilio", label: "Twilio" }];
+
+const interruptSensitivities = [
+  { value: "low", label: "Low" },
+  { value: "medium", label: "Medium" },
+  { value: "high", label: "High" },
 ];
 
 function inferProvider(voice: VoiceConfig): string | null {
@@ -72,15 +83,300 @@ export function VoiceSection({ voice, onChange }: VoiceSectionProps) {
 
           <TextInput
             label="Speech Model"
-            description="Speech recognition model"
+            description="Speech recognition model. Conversational models such as deepgram-flux end the turn on meaning rather than on silence, so the agent replies without waiting out a pause."
             value={voice.twilio_speech_model}
             onChange={(twilio_speech_model) => onChange({ ...voice, twilio_speech_model })}
             placeholder="phone_call"
           />
 
+          <SelectInput
+            label="Interruption Sensitivity"
+            description="How readily the agent stops talking when the caller speaks. Higher yields sooner but can false-trigger on background noise."
+            value={voice.twilio_interrupt_sensitivity ?? "medium"}
+            onChange={(twilio_interrupt_sensitivity) => onChange({ ...voice, twilio_interrupt_sensitivity })}
+            options={interruptSensitivities}
+          />
+
+          <TextInput
+            label="TTS Provider"
+            description="Text-to-speech provider (e.g. elevenlabs, polly). Twilio now defaults to ElevenLabs when left empty; set to polly to use Amazon Polly instead."
+            value={voice.twilio_tts_provider}
+            onChange={(twilio_tts_provider) => onChange({ ...voice, twilio_tts_provider })}
+            placeholder="elevenlabs"
+          />
+
+          <SelectInput
+            label="ElevenLabs Text Normalization"
+            description="Whether ElevenLabs normalizes text (numbers, dates, etc.) before speaking it. On costs extra latency but reads awkward text more naturally; off is faster. Only applies when TTS Provider is elevenlabs."
+            value={voice.twilio_elevenlabs_text_normalization}
+            onChange={(twilio_elevenlabs_text_normalization) => onChange({ ...voice, twilio_elevenlabs_text_normalization })}
+            options={[
+              { value: "on", label: "On" },
+              { value: "off", label: "Off" },
+            ]}
+          />
+
+          <TextInput
+            label="Language"
+            description='STT/TTS language (BCP-47, e.g. en-US, en-GB), or "multi" to auto-detect the caller&apos;s language per turn. "multi" requires TTS Provider elevenlabs and a Deepgram Speech Model. Leave empty for en-US.'
+            value={voice.twilio_language}
+            onChange={(twilio_language) => onChange({ ...voice, twilio_language })}
+            placeholder="en-US"
+          />
+
+          <Toggle
+            label="Enable Inbound Call Answering"
+            description="Allow Twilio inbound calls at /api/voice/twilio/inbound"
+            value={voice.inbound_enabled}
+            onChange={(inbound_enabled) => onChange({ ...voice, inbound_enabled })}
+          />
+
+
         </>
       )}
+
       </SectionPanel>
+
+      <SectionPanel
+        title="Voice notes"
+        icon={MicrophoneIcon}
+        helpTip="Voice notes recorded in chat or sent over a channel are transcribed when they arrive, so agents read what was said. Changes take effect after a restart."
+        className="mt-6"
+      >
+        <TextInput
+          label="Transcription Provider"
+          description='A provider from Settings → Providers that serves the OpenAI-compatible transcription API: openai, groq, or a generic entry pointing at a local Whisper server. Leave empty to use OpenAI, then Groq, if configured. Enter "none" to turn transcription off.'
+          value={voice.transcription_provider}
+          onChange={(transcription_provider) => onChange({ ...voice, transcription_provider })}
+          placeholder="openai"
+        />
+        <TextInput
+          label="Transcription Model"
+          description="Leave empty for gpt-4o-mini-transcribe on OpenAI, whisper-large-v3-turbo on Groq, or whisper-1 elsewhere."
+          value={voice.transcription_model}
+          onChange={(transcription_model) => onChange({ ...voice, transcription_model })}
+          placeholder="gpt-4o-mini-transcribe"
+        />
+        <TextInput
+          label="Language"
+          description="ISO-639-1 code of the language you speak in voice notes (e.g. en). Leave empty to detect it per recording."
+          value={voice.transcription_language}
+          onChange={(transcription_language) => onChange({ ...voice, transcription_language })}
+          placeholder="en"
+        />
+      </SectionPanel>
+
+      {voice.inbound_enabled && (
+        <>
+          <InboundSettings />
+          <CallerAllowlist />
+        </>
+      )}
     </div>
+  );
+}
+
+interface InboundSettingsData {
+  agent: string | null;
+  greeting: string | null;
+}
+
+function InboundSettings() {
+  const [agent, setAgent] = useState("");
+  const [greeting, setGreeting] = useState("");
+  const [saved, setSaved] = useState<InboundSettingsData>({ agent: null, greeting: null });
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+
+  const apply = (data: InboundSettingsData) => {
+    setAgent(data.agent ?? "");
+    setGreeting(data.greeting ?? "");
+    setSaved(data);
+  };
+
+  const load = useCallback(async () => {
+    try {
+      apply(await api.get<InboundSettingsData>("/api/voice/inbound-settings"));
+    } catch {
+      setError("Failed to load inbound settings");
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => { load(); }, [load]);
+
+  const save = async () => {
+    setError(null);
+    try {
+      apply(await api.put<InboundSettingsData>("/api/voice/inbound-settings", {
+        agent: agent.trim(),
+        greeting: greeting.trim(),
+      }));
+    } catch {
+      setError("Failed to save inbound settings");
+    }
+  };
+
+  const dirty =
+    agent.trim() !== (saved.agent ?? "") || greeting.trim() !== (saved.greeting ?? "");
+
+  return (
+    <SectionPanel title="Inbound Answering">
+      <p className="text-xs text-text-tertiary mb-3">
+        Settings for how your inbound calls are answered.
+      </p>
+      {loading && <p className="text-sm text-text-tertiary">Loading...</p>}
+      {error && <p className="text-sm text-error-text mb-2">{error}</p>}
+      {!loading && (
+        <div className="space-y-3">
+          <div>
+            <label className="block text-xs font-medium text-text-tertiary mb-1">Answering Agent</label>
+            <input
+              type="text"
+              value={agent}
+              onChange={(e) => setAgent(e.target.value)}
+              placeholder="receptionist (handle or name)"
+              className="w-full rounded-lg border border-border bg-surface px-3 py-2 text-sm text-text-primary placeholder:text-text-tertiary focus:border-accent focus:outline-none"
+            />
+            <p className="text-xs text-text-tertiary mt-1">
+              One of your agents by handle or name. Leave empty to use your receptionist.
+            </p>
+          </div>
+          <div>
+            <label className="block text-xs font-medium text-text-tertiary mb-1">Welcome Greeting</label>
+            <input
+              type="text"
+              value={greeting}
+              onChange={(e) => setGreeting(e.target.value)}
+              placeholder="Hi, thanks for calling..."
+              className="w-full rounded-lg border border-border bg-surface px-3 py-2 text-sm text-text-primary placeholder:text-text-tertiary focus:border-accent focus:outline-none"
+            />
+            <p className="text-xs text-text-tertiary mt-1">
+              Spoken when a call connects. Leave empty to use the server default.
+            </p>
+          </div>
+          <div className="flex justify-end">
+            <button
+              onClick={save}
+              disabled={!dirty}
+              className="rounded-lg bg-accent px-4 py-2 text-sm font-medium text-surface hover:bg-accent-hover disabled:opacity-50 transition"
+            >
+              Save
+            </button>
+          </div>
+        </div>
+      )}
+    </SectionPanel>
+  );
+}
+
+function CallerAllowlist() {
+  const [entries, setEntries] = useState<AllowlistEntry[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [newPhone, setNewPhone] = useState("");
+  const [newName, setNewName] = useState("");
+  const [error, setError] = useState<string | null>(null);
+
+  const load = useCallback(async () => {
+    try {
+      const data = await api.get<AllowlistEntry[]>("/api/voice/allowlist");
+      setEntries(data);
+    } catch {
+      setError("Failed to load allowlist");
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => { load(); }, [load]);
+
+  const addEntry = async () => {
+    if (!newPhone.trim()) return;
+    setError(null);
+    try {
+      const data = await api.post<AllowlistEntry[]>("/api/voice/allowlist", {
+        phone: newPhone.trim(),
+        name: newName.trim() || null,
+      });
+      setEntries(data);
+      setNewPhone("");
+      setNewName("");
+    } catch {
+      setError("Failed to add entry");
+    }
+  };
+
+  const removeEntry = async (phone: string) => {
+    setError(null);
+    try {
+      const encoded = encodeURIComponent(phone);
+      const data = await api.delete<AllowlistEntry[]>(`/api/voice/allowlist/${encoded}`);
+      setEntries(data);
+    } catch {
+      setError("Failed to remove entry");
+    }
+  };
+
+  return (
+    <SectionPanel title="Caller Allowlist">
+      <p className="text-xs text-text-tertiary mb-3">
+        Phone numbers allowed for inbound answering, with optional names. When a named
+        caller dials in, the agent is told who is calling.
+      </p>
+      {loading && <p className="text-sm text-text-tertiary">Loading...</p>}
+      {error && <p className="text-sm text-error-text mb-2">{error}</p>}
+      {entries.length > 0 && (
+        <div className="space-y-1 mb-4">
+          {entries.map((entry) => (
+            <div key={entry.phone} className="flex items-center justify-between rounded-lg border border-border bg-surface px-3 py-2">
+              <div className="flex items-center gap-3">
+                <span className="text-sm text-text-primary font-mono">{entry.phone}</span>
+                {entry.name && (
+                  <span className="text-sm text-text-secondary">— {entry.name}</span>
+                )}
+              </div>
+              <button
+                onClick={() => removeEntry(entry.phone)}
+                className="text-xs text-text-tertiary hover:text-error-text"
+              >
+                Remove
+              </button>
+            </div>
+          ))}
+        </div>
+      )}
+      <div className="flex items-end gap-2">
+        <div className="flex-1">
+          <label className="block text-xs font-medium text-text-tertiary mb-1">Phone</label>
+          <input
+            type="tel"
+            value={newPhone}
+            onChange={(e) => setNewPhone(e.target.value)}
+            onKeyDown={(e) => { if (e.key === "Enter") addEntry(); }}
+            placeholder="+44 7xxx xxx xxx"
+            className="w-full rounded-lg border border-border bg-surface px-3 py-2 text-sm text-text-primary placeholder:text-text-tertiary focus:border-accent focus:outline-none"
+          />
+        </div>
+        <div className="flex-1">
+          <label className="block text-xs font-medium text-text-tertiary mb-1">Name (optional)</label>
+          <input
+            type="text"
+            value={newName}
+            onChange={(e) => setNewName(e.target.value)}
+            onKeyDown={(e) => { if (e.key === "Enter") addEntry(); }}
+            placeholder="e.g. Mum, Dr. Smith"
+            className="w-full rounded-lg border border-border bg-surface px-3 py-2 text-sm text-text-primary placeholder:text-text-tertiary focus:border-accent focus:outline-none"
+          />
+        </div>
+        <button
+          onClick={addEntry}
+          disabled={!newPhone.trim()}
+          className="rounded-lg bg-accent px-4 py-2 text-sm font-medium text-surface hover:bg-accent-hover disabled:opacity-50 transition"
+        >
+          Add
+        </button>
+      </div>
+    </SectionPanel>
   );
 }

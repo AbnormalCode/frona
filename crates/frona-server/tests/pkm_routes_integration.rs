@@ -74,6 +74,7 @@ async fn pat(state: &AppState, scopes: Vec<String>) -> String {
 
 async fn pat_with_groups(state: &AppState, scopes: Vec<String>, groups: Vec<String>) -> String {
     let user = frona::auth::User {
+        phone: None,
         id: "u1".into(),
         handle: frona::handle!("testuser"),
         email: "t@t.com".into(),

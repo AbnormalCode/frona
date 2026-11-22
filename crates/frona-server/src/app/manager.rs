@@ -572,6 +572,7 @@ mod tests {
         let now = chrono::Utc::now();
         let _ = repo
             .create(&crate::agent::models::Agent {
+                voice_id: None,
                 id: "agent-1".into(),
                 user_id: "user-1".into(),
                 handle: crate::handle!("agent-1"),
@@ -616,6 +617,7 @@ mod tests {
         );
         let now = chrono::Utc::now();
         let user = crate::auth::User {
+            phone: None,
             id: "user-1".into(),
             handle: crate::handle!("user-1"),
             email: "test@example.com".into(),

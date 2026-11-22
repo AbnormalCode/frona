@@ -482,6 +482,7 @@ mod tests {
         let event_sender = broadcast.create_event_sender("u", "c", None);
         InferenceContext::new(
             crate::auth::User {
+                phone: None,
                 id: "u".into(),
                 handle: crate::handle!("uu"),
                 email: "e".into(),
@@ -494,6 +495,7 @@ mod tests {
                 updated_at: chrono::Utc::now(),
             },
             crate::agent::models::Agent {
+                voice_id: None,
                 id: "a".into(),
                 user_id: "test-user".into(),
                 handle: crate::handle!("aa"),

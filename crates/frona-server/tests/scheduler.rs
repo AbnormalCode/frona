@@ -48,6 +48,7 @@ fn make_agent(
 ) -> Agent {
     let now = Utc::now();
     Agent {
+        voice_id: None,
         id: id.to_string(),
         user_id: user_id.to_string(),
         handle: frona::core::Handle::try_new(id).unwrap(),

@@ -157,6 +157,7 @@ async fn build_state(provider: Arc<MockModelProvider>) -> (AppState, tempfile::T
 async fn seed_user_and_agent(state: &AppState, user_id: &str, agent_id: &str) {
     SurrealRepo::<User>::new(state.db.clone())
         .create(&User {
+            phone: None,
             id: user_id.into(),
             handle: frona::handle!("test-user"),
             email: format!("{user_id}@test.com"),
@@ -173,6 +174,7 @@ async fn seed_user_and_agent(state: &AppState, user_id: &str, agent_id: &str) {
 
     SurrealRepo::<Agent>::new(state.db.clone())
         .create(&Agent {
+            voice_id: None,
             id: agent_id.into(),
             user_id: user_id.into(),
             handle: frona::handle!("channel-agent"),

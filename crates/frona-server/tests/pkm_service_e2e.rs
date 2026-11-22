@@ -104,6 +104,7 @@ fn test_user_service(db: &Surreal<Db>) -> frona::auth::user_service::UserService
 async fn seed_identity(db: &Surreal<Db>) {
     test_user_service(db)
         .create(&frona::auth::User {
+            phone: None,
             id: "test-user".into(),
             handle: frona::handle!("testuser"),
             email: "casey@example.com".into(),
@@ -133,6 +134,7 @@ async fn seed_agent_and_chat(db: &Surreal<Db>) {
 
     SurrealRepo::<frona::agent::models::Agent>::new(db.clone())
         .create(&frona::agent::models::Agent {
+            voice_id: None,
             id: "test-agent".into(),
             user_id: "test-user".into(),
             handle: frona::handle!("assistant"),
@@ -731,6 +733,7 @@ async fn consolidation_routes_self_memories_persists_aliases_and_updates_user_pr
     let users = test_user_service(&db);
     users
         .create(&frona::auth::User {
+            phone: None,
             id: "test-user".into(),
             handle: frona::handle!("testuser"),
             email: "casey@example.com".into(),
@@ -1013,6 +1016,7 @@ async fn self_entity_write_through_updates_user_timezone() {
     let users = test_user_service(&db);
     users
         .create(&frona::auth::User {
+            phone: None,
             id: "test-user".into(),
             handle: frona::handle!("testuser"),
             email: "t@t.com".into(),
@@ -1249,6 +1253,7 @@ async fn recovery_repairs_a_revision_that_does_not_match_the_file() {
     let users = test_user_service(&db);
     users
         .create(&frona::auth::User {
+            phone: None,
             id: "test-user".into(),
             handle: frona::handle!("testuser"),
             email: "casey@example.com".into(),
@@ -1369,6 +1374,7 @@ async fn recovery_relocates_deduplicates_and_rerenders() {
     let users = test_user_service(&db);
     users
         .create(&frona::auth::User {
+            phone: None,
             id: "test-user".into(),
             handle: frona::handle!("testuser"),
             email: "casey@example.com".into(),
@@ -1538,6 +1544,7 @@ async fn recovery_relocates_a_renamed_directory() {
     // A real User row so recovery can resolve the handle from user_id.
     test_user_service(&db)
         .create(&frona::auth::User {
+            phone: None,
             id: "test-user".into(),
             handle: frona::handle!("testuser"),
             email: "casey@example.com".into(),

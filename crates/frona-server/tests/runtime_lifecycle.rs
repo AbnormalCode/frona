@@ -1295,6 +1295,7 @@ async fn create_user(
         .state
         .user_service
         .create(&frona::auth::User {
+            phone: None,
             id: id.clone(),
             handle,
             email: format!("{id}@fixture.invalid"),

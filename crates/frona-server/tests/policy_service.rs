@@ -107,6 +107,7 @@ async fn setup_with_extra_tools(
     // Seed the user that policies/agents in this file all reference.
     user_service
         .create(&frona::auth::User {
+            phone: None,
             id: "user-1".into(),
             handle: frona::handle!("user-1"),
             email: "u@example.com".into(),
@@ -127,6 +128,7 @@ async fn setup_with_extra_tools(
 
 fn test_agent(id: &str) -> Agent {
     Agent {
+        voice_id: None,
         id: id.to_string(),
         user_id: "user-1".into(),
         handle: frona::core::Handle::try_new(id).unwrap(),
@@ -1652,6 +1654,7 @@ use frona::auth::User as UserModel;
 
 fn test_user(id: &str, groups: Vec<&str>) -> UserModel {
     UserModel {
+        phone: None,
         id: id.into(),
         handle: frona::core::Handle::try_new(id).unwrap(),
         email: format!("{id}@test"),
@@ -1903,6 +1906,7 @@ mod decision_cache {
         let user_repo: SurrealRepo<frona::auth::User> = SurrealRepo::new(db.clone());
         user_repo
             .create(&frona::auth::User {
+                phone: None,
                 id: "user-2".into(),
                 handle: frona::handle!("user-2"),
                 email: "u2@example.com".into(),

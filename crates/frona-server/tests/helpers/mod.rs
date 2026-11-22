@@ -656,6 +656,7 @@ pub fn mock_context() -> InferenceContext {
     let event_sender = broadcast.create_event_sender("test-user", "test-chat", None);
     InferenceContext::new(
         frona::auth::User {
+            phone: None,
             id: "test-user".into(),
             handle: frona::handle!("testuser"),
             email: "test@test.com".into(),
@@ -668,6 +669,7 @@ pub fn mock_context() -> InferenceContext {
             updated_at: chrono::Utc::now(),
         },
         frona::agent::models::Agent {
+            voice_id: None,
             id: "test-agent".into(),
             user_id: "test-user".into(),
             handle: frona::handle!("test-agent"),

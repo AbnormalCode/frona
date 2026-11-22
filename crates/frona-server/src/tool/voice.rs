@@ -1,13 +1,19 @@
 use std::sync::Arc;
 
 use async_trait::async_trait;
+use base64::Engine as _;
+use hmac::{Hmac, KeyInit, Mac};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use sha1::Sha1;
+use std::collections::HashMap;
 use twilio_async::{TwilioJson, TwilioRequest};
 
-use crate::auth::User;
+use crate::agent::models::Agent;
+use crate::agent::service::AgentService;
 use crate::auth::token::models::TokenType;
 use crate::auth::token::service::{CreateTokenRequest, TokenService};
+use crate::auth::{User, UserService};
 use crate::call::CallService;
 use crate::call::models::CallDirection;
 use crate::contact::ContactService;
@@ -38,6 +44,151 @@ pub struct VoiceSessionExtensions {
     pub contact_id: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub call_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub direction: Option<CallDirection>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub caller_phone: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub caller_name: Option<String>,
+}
+
+// ---------------------------------------------------------------------------
+// Phone number helpers
+// ---------------------------------------------------------------------------
+
+/// Normalise a phone number to a canonical E.164-ish form for comparison:
+/// keep the leading `+` and strip everything that is not an ASCII digit.
+/// "+1 (555) 555-1234" normalises to "+15555551234".
+///
+/// The `00` international dialling prefix (common in the UK and Europe) is
+/// treated as equivalent to `+`, so "0044 20 7946 0958" becomes "+442079460958"
+/// and will match a stored entry of "+442079460958".
+pub fn normalize_phone(phone: &str) -> String {
+    let trimmed = phone.trim();
+    // Determine whether this is an international number and strip any prefix.
+    let (has_plus, digits_only) = if let Some(rest) = trimmed.strip_prefix('+') {
+        (true, rest)
+    } else if let Some(rest) = trimmed.strip_prefix("00") {
+        // Common European/UK international trunk prefix — treat as '+'.
+        (true, rest)
+    } else {
+        (false, trimmed)
+    };
+
+    let mut out = String::new();
+    if has_plus {
+        out.push('+');
+    }
+    for c in digits_only.chars() {
+        if c.is_ascii_digit() {
+            out.push(c);
+        }
+    }
+    out
+}
+
+/// Find the active (non-deactivated) user whose phone number matches `phone`,
+/// compared in the canonical form from [`normalize_phone`] so that formatting
+/// differences (spaces, `+`/`00` prefixes, punctuation) don't cause a miss.
+///
+/// Returns `None` when there is no match, when the caller has no usable number,
+/// or when the lookup fails — callers treat a `None` as "not one of our users".
+pub async fn find_user_by_phone(user_service: &UserService, phone: &str) -> Option<User> {
+    let target = normalize_phone(phone);
+    if target.is_empty() {
+        return None;
+    }
+    // Narrowed to rows that actually carry a phone; the format-insensitive
+    // comparison still has to happen here rather than in SQL.
+    match user_service.find_all_with_phone().await {
+        Ok(users) => users.into_iter().find(|u| {
+            u.phone
+                .as_deref()
+                .is_some_and(|p| normalize_phone(p) == target)
+        }),
+        Err(e) => {
+            tracing::warn!(error = %e, "find_user_by_phone: user lookup failed");
+            None
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Agent resolution
+// ---------------------------------------------------------------------------
+
+/// Whether `s` could be an agent id (ids are UUIDs — see `core::repository::new_id`).
+/// Handles and display names never parse as one, so this lets callers on a
+/// latency-sensitive path (like answering an inbound call) skip a
+/// guaranteed-miss lookup.
+pub fn looks_like_agent_id(s: &str) -> bool {
+    uuid::Uuid::parse_str(s).is_ok()
+}
+
+/// Resolve `query` against `owner_id`'s agents by id, then handle, then
+/// display name — the same chain the inbound-call agent-selection setting
+/// and the `transfer_call` tool both use. `None` when none of the three
+/// match.
+///
+/// The id branch isn't owner-scoped (unlike handle/name): an id is only
+/// ever produced by the owner's own prior selection, so trusting it here
+/// avoids an extra scoped lookup on the common miss.
+pub async fn resolve_agent_by_query(
+    agent_service: &AgentService,
+    owner_id: &str,
+    query: &str,
+) -> Option<Agent> {
+    if looks_like_agent_id(query)
+        && let Ok(Some(agent)) = agent_service.find_by_id(query).await
+    {
+        return Some(agent);
+    }
+    if let Ok(Some(agent)) = agent_service.find_by_handle(owner_id, query).await {
+        return Some(agent);
+    }
+    if let Ok(Some(agent)) = agent_service.find_by_name(owner_id, query).await {
+        return Some(agent);
+    }
+    None
+}
+
+// ---------------------------------------------------------------------------
+// Twilio webhook signature validation
+// ---------------------------------------------------------------------------
+
+type HmacSha1 = Hmac<Sha1>;
+
+/// Validate the `X-Twilio-Signature` header on an incoming Twilio webhook.
+///
+/// Twilio computes HMAC-SHA1 over the full request URL concatenated with all
+/// sorted POST body key/value pairs (no separators), then base64-encodes the
+/// result.  Returns `true` when the computed digest matches `header_sig`.
+pub fn validate_twilio_signature(
+    auth_token: &str,
+    url: &str,
+    params: &HashMap<String, String>,
+    header_sig: &str,
+) -> bool {
+    let mut sorted: Vec<(&str, &str)> = params
+        .iter()
+        .map(|(k, v)| (k.as_str(), v.as_str()))
+        .collect();
+    sorted.sort_by_key(|(k, _)| *k);
+
+    let mut s = url.to_string();
+    for (k, v) in sorted {
+        s.push_str(k);
+        s.push_str(v);
+    }
+
+    let mut mac = match HmacSha1::new_from_slice(auth_token.as_bytes()) {
+        Ok(m) => m,
+        Err(_) => return false,
+    };
+    mac.update(s.as_bytes());
+    let result = mac.finalize().into_bytes();
+    let expected = base64::engine::general_purpose::STANDARD.encode(result);
+    expected == header_sig
 }
 
 #[async_trait]

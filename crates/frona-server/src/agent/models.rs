@@ -31,6 +31,10 @@ pub struct Agent {
     pub skills: Option<Vec<String>>,
     #[serde(default)]
     pub avatar: Option<String>,
+    /// TTS voice ID for live calls this agent answers or is transferred
+    /// into. `None` falls back to the server-level `voice.twilio_voice_id`.
+    #[serde(default)]
+    pub voice_id: Option<String>,
     #[serde(default)]
     #[surreal(default)]
     pub identity: BTreeMap<String, String>,
@@ -57,6 +61,8 @@ pub struct CreateAgentRequest {
     pub sandbox_policy: Option<SandboxPolicy>,
     #[serde(default)]
     pub sandbox_limits: Option<SandboxLimits>,
+    #[serde(default)]
+    pub voice_id: Option<String>,
 }
 
 #[derive(Debug, Default, Deserialize, bon::Builder)]
@@ -74,6 +80,11 @@ pub struct UpdateAgentRequest {
     pub sandbox_limits: Option<SandboxLimits>,
     pub prompt: Option<String>,
     pub identity: Option<BTreeMap<String, String>>,
+    /// `None` (key omitted) leaves the existing voice untouched. `Some(s)`
+    /// sets it; a blank `s` clears it back to the server default — same
+    /// blank-clears convention as `set_inbound_agent`/`set_inbound_greeting`.
+    #[serde(default)]
+    pub voice_id: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -98,6 +109,7 @@ pub struct AgentResponse {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub avatar_url: Option<String>,
     pub identity: BTreeMap<String, String>,
+    pub voice_id: Option<String>,
     pub prompt: Option<String>,
     pub default_prompt: String,
     pub is_builtin: bool,
@@ -144,6 +156,7 @@ impl AgentResponse {
             enabled: agent.enabled,
             tools,
             skills: agent.skills,
+            voice_id: agent.voice_id,
             sandbox_policy,
             sandbox_limits: agent.sandbox_limits,
             avatar_url: None,

@@ -340,6 +340,7 @@ mod tests {
         crate::db::init::setup_schema(&db).await.unwrap();
         let now = chrono::Utc::now();
         let user = crate::auth::User {
+            phone: None,
             id: crate::core::repository::new_id(),
             handle: crate::handle!("owner"),
             email: "owner@example.com".into(),

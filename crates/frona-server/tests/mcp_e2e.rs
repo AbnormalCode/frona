@@ -74,6 +74,7 @@ async fn test_manager(tmp: &std::path::Path) -> Arc<McpManager> {
     let now = chrono::Utc::now();
     user_repo
         .create(&frona::auth::User {
+            phone: None,
             id: "test-user".into(),
             handle: frona::handle!("testuser"),
             email: "test@example.com".into(),

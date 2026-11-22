@@ -857,6 +857,7 @@ async fn startup_promotes_oldest_active_user_when_no_admin() {
     // Insert two users via the repo (bypass the register flow so neither is auto-admin).
     let now = Utc::now();
     let older = UserModel {
+        phone: None,
         id: new_id(),
         handle: frona::handle!("older"),
         email: "older@example.com".into(),
@@ -869,6 +870,7 @@ async fn startup_promotes_oldest_active_user_when_no_admin() {
         updated_at: now,
     };
     let newer = UserModel {
+        phone: None,
         id: new_id(),
         handle: frona::handle!("newer"),
         email: "newer@example.com".into(),

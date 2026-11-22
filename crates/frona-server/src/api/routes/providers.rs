@@ -381,6 +381,7 @@ mod tests {
         state.model_provider_service.config_service = state.config_service.clone();
         let repository: SurrealRepo<User> = SurrealRepo::new(db);
         let ordinary = User {
+            phone: None,
             id: "ordinary".into(),
             handle: Handle::const_validated("ordinary"),
             email: "ordinary@test.invalid".into(),

@@ -646,6 +646,30 @@ pub struct VoiceConfig {
     pub twilio_voice_id: Option<String>,
     #[schemars(description = "Twilio speech recognition model.")]
     pub twilio_speech_model: Option<String>,
+    #[schemars(
+        description = "TTS provider for ConversationRelay (e.g. elevenlabs, polly). Twilio now defaults to elevenlabs when not set; set this to polly to opt back into Amazon Polly."
+    )]
+    pub twilio_tts_provider: Option<String>,
+    #[schemars(
+        description = "Text normalization for the ElevenLabs TTS provider: \"on\" has ElevenLabs normalize numbers/dates/etc itself (extra latency), \"off\" sends text as-is (lower latency). Only applies when twilio_tts_provider is elevenlabs. Leave unset for ElevenLabs' own default."
+    )]
+    pub twilio_elevenlabs_text_normalization: Option<String>,
+    #[schemars(
+        description = "STT/TTS language for ConversationRelay (BCP-47, e.g. en-US, en-GB), or \"multi\" to auto-detect the caller's language per turn. \"multi\" requires twilio_tts_provider=elevenlabs and a Deepgram twilio_speech_model. Defaults to en-US."
+    )]
+    pub twilio_language: Option<String>,
+    #[schemars(
+        description = "How readily the agent yields when the caller starts speaking: low, medium, or high. Higher cuts the agent off sooner but false-triggers on background noise. Defaults to medium."
+    )]
+    pub twilio_interrupt_sensitivity: Option<String>,
+    #[schemars(
+        description = "Enable inbound call answering. Requires the voice provider to POST to the inbound webhook."
+    )]
+    pub inbound_enabled: bool,
+    #[schemars(
+        description = "Server-level default greeting spoken when an inbound call connects, used when the owning user has not set their own via /api/voice/inbound-settings."
+    )]
+    pub inbound_welcome_greeting: Option<String>,
 }
 
 #[derive(Clone, Debug, Default, Deserialize, Serialize, JsonSchema)]

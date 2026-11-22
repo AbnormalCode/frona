@@ -40,6 +40,7 @@ fn presign_service(db: &Surreal<Db>) -> PresignService {
 async fn create_user(db: &Surreal<Db>, id: &str, handle: &str) {
     let repo: SurrealRepo<User> = SurrealRepo::new(db.clone());
     let user = User {
+        phone: None,
         id: id.to_string(),
         handle: frona::core::Handle::try_new(handle).unwrap(),
         email: format!("{handle}@test.com"),

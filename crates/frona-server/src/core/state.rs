@@ -59,6 +59,14 @@ use crate::db::repo::chats::SurrealChatRepo;
 use crate::db::repo::generic::SurrealRepo;
 use crate::db::repo::spaces::SurrealSpaceRepo;
 
+/// A named entry in the per-user voice inbound allowlist.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct AllowlistEntry {
+    pub phone: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
+}
+
 #[derive(Clone, Default)]
 pub struct ActiveSessions {
     inner: Arc<Mutex<HashMap<String, (u64, CancellationToken)>>>,
@@ -883,6 +891,196 @@ impl AppState {
 
     pub fn signal_service(&self) -> Arc<SignalService> {
         self.signal_service.clone()
+    }
+
+    // -----------------------------------------------------------------------
+    // Voice inbound allowlist (DB-stored per user)
+    // -----------------------------------------------------------------------
+
+    fn allowlist_key(user_id: &str) -> String {
+        format!("voice.inbound_allowlist.{user_id}")
+    }
+
+    fn inbound_agent_key(user_id: &str) -> String {
+        format!("voice.inbound_agent.{user_id}")
+    }
+
+    /// Return the user's preferred inbound answering agent (ID, handle, or
+    /// name), if they have set one. Blank values are treated as unset.
+    pub async fn get_inbound_agent(&self, user_id: &str) -> Option<String> {
+        self.get_runtime_config(&Self::inbound_agent_key(user_id))
+            .await
+            .ok()
+            .flatten()
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty())
+    }
+
+    /// Set the user's preferred inbound answering agent. A blank value clears
+    /// the override, so inbound calls fall back to the user's `receptionist`.
+    pub async fn set_inbound_agent(
+        &self,
+        user_id: &str,
+        agent: &str,
+    ) -> Result<(), crate::core::error::AppError> {
+        self.set_runtime_config(&Self::inbound_agent_key(user_id), agent.trim())
+            .await
+    }
+
+    fn inbound_greeting_key(user_id: &str) -> String {
+        format!("voice.inbound_greeting.{user_id}")
+    }
+
+    /// Return the user's inbound welcome greeting, if they have set one. Blank
+    /// values are treated as unset.
+    pub async fn get_inbound_greeting(&self, user_id: &str) -> Option<String> {
+        self.get_runtime_config(&Self::inbound_greeting_key(user_id))
+            .await
+            .ok()
+            .flatten()
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty())
+    }
+
+    /// Set the user's inbound welcome greeting. A blank value clears it, so the
+    /// server-level default (`voice.inbound_welcome_greeting`) applies instead.
+    pub async fn set_inbound_greeting(
+        &self,
+        user_id: &str,
+        greeting: &str,
+    ) -> Result<(), crate::core::error::AppError> {
+        self.set_runtime_config(&Self::inbound_greeting_key(user_id), greeting.trim())
+            .await
+    }
+
+    /// Return the allowlist entries on a user's allowlist (DB-stored).
+    pub async fn get_allowlist(&self, user_id: &str) -> Vec<AllowlistEntry> {
+        let key = Self::allowlist_key(user_id);
+        match self.get_runtime_config(&key).await {
+            Ok(Some(json)) => {
+                // Try new format (Vec<AllowlistEntry>) first, fall back to
+                // legacy Vec<String> and convert.
+                serde_json::from_str::<Vec<AllowlistEntry>>(&json).unwrap_or_else(|_| {
+                    let phones: Vec<String> = serde_json::from_str(&json).unwrap_or_default();
+                    phones
+                        .into_iter()
+                        .map(|p| AllowlistEntry {
+                            phone: p,
+                            name: None,
+                        })
+                        .collect()
+                })
+            }
+            _ => Vec::new(),
+        }
+    }
+
+    /// Add `phone` (with optional `name`) to the user's allowlist (idempotent).
+    pub async fn add_to_allowlist(
+        &self,
+        user_id: &str,
+        phone: &str,
+        name: Option<&str>,
+    ) -> Result<(), crate::core::error::AppError> {
+        let normalized = crate::tool::voice::normalize_phone(phone);
+        if normalized.is_empty() || normalized == "+" {
+            return Err(crate::core::error::AppError::Validation(
+                "Invalid phone number".into(),
+            ));
+        }
+        let mut list = self.get_allowlist(user_id).await;
+        // If the phone already exists, update the name; otherwise add.
+        if let Some(entry) = list
+            .iter_mut()
+            .find(|e| crate::tool::voice::normalize_phone(&e.phone) == normalized)
+        {
+            if let Some(n) = name {
+                entry.name = Some(n.to_string());
+            }
+        } else {
+            list.push(AllowlistEntry {
+                phone: normalized,
+                name: name.map(|s| s.to_string()),
+            });
+        }
+        let json = serde_json::to_string(&list)
+            .map_err(|e| crate::core::error::AppError::Internal(e.to_string()))?;
+        self.set_runtime_config(&Self::allowlist_key(user_id), &json)
+            .await
+    }
+
+    /// Remove `phone` from the user's allowlist (no-op if absent).
+    pub async fn remove_from_allowlist(
+        &self,
+        user_id: &str,
+        phone: &str,
+    ) -> Result<(), crate::core::error::AppError> {
+        let normalized = crate::tool::voice::normalize_phone(phone);
+        let mut list = self.get_allowlist(user_id).await;
+        list.retain(|e| crate::tool::voice::normalize_phone(&e.phone) != normalized);
+        let json = serde_json::to_string(&list)
+            .map_err(|e| crate::core::error::AppError::Internal(e.to_string()))?;
+        self.set_runtime_config(&Self::allowlist_key(user_id), &json)
+            .await
+    }
+
+    /// Resolve which platform user "owns" an inbound call from `phone`.
+    ///
+    /// Scans every user's DB allowlist (key prefix
+    /// `voice.inbound_allowlist.{user_id}`); the first match wins. Ownership is
+    /// entirely per-user — there is no global/static fallback list.
+    ///
+    /// Returns `None` when the caller is not on any user's allowlist.
+    /// When matched, returns the entry's `name` if set.
+    pub async fn find_user_for_caller(&self, phone: &str) -> Option<(String, Option<String>)> {
+        let normalized = crate::tool::voice::normalize_phone(phone);
+        if normalized.is_empty() || normalized == "+" {
+            return None;
+        }
+
+        // Check every per-user DB allowlist.
+        let mut result = self
+            .db
+            .query(
+                "SELECT key, value FROM runtime_config \
+                 WHERE string::starts_with(key, 'voice.inbound_allowlist.')",
+            )
+            .await
+            .ok()?;
+
+        let rows: Vec<serde_json::Value> = result.take(0).ok()?;
+
+        const PREFIX: &str = "voice.inbound_allowlist.";
+        for row in &rows {
+            let (Some(key), Some(value)) = (
+                row.get("key").and_then(|v| v.as_str()),
+                row.get("value").and_then(|v| v.as_str()),
+            ) else {
+                continue; // skip malformed rows
+            };
+            let Some(user_id) = key.strip_prefix(PREFIX) else {
+                continue;
+            };
+
+            // Try new format (Vec<AllowlistEntry>) first, fall back to Vec<String>.
+            let entries: Vec<AllowlistEntry> = serde_json::from_str(value).unwrap_or_else(|_| {
+                let phones: Vec<String> = serde_json::from_str(value).unwrap_or_default();
+                phones
+                    .into_iter()
+                    .map(|p| AllowlistEntry {
+                        phone: p,
+                        name: None,
+                    })
+                    .collect()
+            });
+            for entry in &entries {
+                if crate::tool::voice::normalize_phone(&entry.phone) == normalized {
+                    return Some((user_id.to_string(), entry.name.clone()));
+                }
+            }
+        }
+
+        None
     }
 
     pub fn is_shutting_down(&self) -> bool {
