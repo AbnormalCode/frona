@@ -76,6 +76,9 @@ pub struct ChatService {
     /// Set once at startup via [`ChatService::set_transcription`]. `None` when
     /// no provider can transcribe, in which case voice notes stay plain files.
     transcription: Option<crate::inference::transcription::TranscriptionService>,
+    /// Set once at startup via [`ChatService::set_notification_service`]. When
+    /// absent (tests), agent replies simply don't notify.
+    notification_service: Option<crate::notification::service::NotificationService>,
     compactor: super::compactor::ChatCompactor,
 }
 
@@ -121,8 +124,89 @@ impl ChatService {
             usage_service,
             share_service: None,
             transcription: None,
+            notification_service: None,
             compactor,
         }
+    }
+
+    /// Notify the user of agent replies and let the harness surface pending
+    /// approvals. Call once at startup before the service is cloned.
+    pub fn set_notification_service(
+        &mut self,
+        notification_service: crate::notification::service::NotificationService,
+    ) {
+        self.notification_service = Some(notification_service);
+    }
+
+    pub fn notifications(&self) -> Option<&crate::notification::service::NotificationService> {
+        self.notification_service.as_ref()
+    }
+
+    /// A chat run for a delegation, cron run, or signal. Its replies are
+    /// intermediate steps the user did not ask to hear about; the outcome
+    /// reaches them through the parent chat, and approvals notify separately.
+    async fn is_background_task(&self, task_id: Option<&str>) -> bool {
+        use crate::agent::task::models::TaskKind;
+        let Some(task_id) = task_id else {
+            return false;
+        };
+        let tasks = crate::db::repo::tasks::SurrealTaskRepo::new(self.chat_repo.db().clone());
+        match tasks.find_by_id(task_id).await {
+            Ok(Some(task)) => matches!(
+                task.kind,
+                TaskKind::Delegation { .. }
+                    | TaskKind::Cron { .. }
+                    | TaskKind::CronRun { .. }
+                    | TaskKind::Signal { .. }
+            ),
+            _ => false,
+        }
+    }
+
+    /// Push the user a short preview of a finished agent reply. Best effort:
+    /// a failure here must never affect the reply itself.
+    async fn notify_chat_reply(&self, user_id: &str, chat: &Chat, reply: &Message) {
+        use crate::notification::models::{
+            NotificationCategory, NotificationData, NotificationLevel,
+        };
+        let Some(notifications) = &self.notification_service else {
+            return;
+        };
+        if reply.role != MessageRole::Agent
+            || reply.content.is_empty()
+            || reply.status == Some(MessageStatus::Executing)
+            || self.is_background_task(chat.task_id.as_deref()).await
+        {
+            return;
+        }
+        let agent_name = match &reply.agent_id {
+            Some(agent_id) => self
+                .agent_service
+                .find_by_id(agent_id)
+                .await
+                .ok()
+                .flatten()
+                .map(|a| a.name)
+                .unwrap_or_else(|| "Frona".to_string()),
+            None => "Frona".to_string(),
+        };
+        let preview = match reply.content.char_indices().nth(200) {
+            Some((end, _)) => format!("{}…", &reply.content[..end]),
+            None => reply.content.clone(),
+        };
+        let _ = notifications
+            .create_and_notify(
+                user_id,
+                NotificationCategory::ChatReply,
+                NotificationData::Agent {
+                    agent_id: reply.agent_id.clone().unwrap_or_default(),
+                    chat_id: chat.id.clone(),
+                },
+                NotificationLevel::Info,
+                agent_name,
+                preview,
+            )
+            .await;
     }
 
     /// Attach the share service so [`ChatService::get_accessible`] can honor
@@ -1346,8 +1430,11 @@ impl ChatService {
         let saved = self
             .persist_prepared_message(chat, message, scope, None)
             .await?;
-        self.presign_and_broadcast_message(saved, user_id, space_id, action)
-            .await
+        let response = self
+            .presign_and_broadcast_message(saved.clone(), user_id, space_id, action)
+            .await?;
+        self.notify_chat_reply(user_id, chat, &saved).await;
+        Ok(response)
     }
 
     async fn presign_and_broadcast_message(
@@ -1562,6 +1649,7 @@ impl ChatService {
                     },
                 ),
             });
+            self.notify_chat_reply(&chat.user_id, &chat, &updated).await;
         }
         Ok(response)
     }

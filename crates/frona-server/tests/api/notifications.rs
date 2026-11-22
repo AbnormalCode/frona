@@ -211,3 +211,76 @@ async fn mark_all_read_without_auth_returns_401() {
         .unwrap();
     assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
 }
+
+#[tokio::test]
+async fn an_agent_reply_notifies_the_user_with_a_preview_and_a_link_to_the_chat() {
+    let (state, _tmp) = test_app_state().await;
+    let (token, user_id) = register_user(
+        &state,
+        "notif-reply",
+        "notifreply@example.com",
+        "password123",
+    )
+    .await;
+    let agent = create_agent(&state, &token, "Scout").await;
+    let agent_id = agent["id"].as_str().unwrap().to_string();
+    let chat = create_chat(&state, &token, &agent_id, Some("Trip")).await;
+    let chat_id = chat["id"].as_str().unwrap().to_string();
+
+    let long_reply = "x".repeat(500);
+    state
+        .chat_service
+        .save_agent_message(&user_id, None, &chat_id, &agent_id, long_reply, None)
+        .await
+        .unwrap();
+
+    let list = state.notification_service.list(&user_id, 10).await.unwrap();
+    assert_eq!(list.len(), 1);
+    assert_eq!(list[0].title, "Scout");
+    assert_eq!(
+        list[0].body.chars().count(),
+        201,
+        "200 chars plus an ellipsis"
+    );
+    assert!(list[0].body.ends_with('…'));
+    match &list[0].data {
+        NotificationData::Agent {
+            agent_id: a,
+            chat_id: c,
+        } => {
+            assert_eq!(a, &agent_id);
+            assert_eq!(c, &chat_id);
+        }
+        other => panic!("expected an agent notification, got {other:?}"),
+    }
+}
+
+#[tokio::test]
+async fn system_messages_and_empty_replies_do_not_notify() {
+    let (state, _tmp) = test_app_state().await;
+    let (token, user_id) = register_user(
+        &state,
+        "notif-quiet",
+        "notifquiet@example.com",
+        "password123",
+    )
+    .await;
+    let agent = create_agent(&state, &token, "Scout").await;
+    let agent_id = agent["id"].as_str().unwrap().to_string();
+    let chat = create_chat(&state, &token, &agent_id, None).await;
+    let chat_id = chat["id"].as_str().unwrap().to_string();
+
+    state
+        .chat_service
+        .save_system_message(&user_id, None, &chat_id, "joined".to_string())
+        .await
+        .unwrap();
+    state
+        .chat_service
+        .save_agent_message(&user_id, None, &chat_id, &agent_id, String::new(), None)
+        .await
+        .unwrap();
+
+    let list = state.notification_service.list(&user_id, 10).await.unwrap();
+    assert!(list.is_empty());
+}

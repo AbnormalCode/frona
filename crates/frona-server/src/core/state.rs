@@ -698,6 +698,33 @@ impl AppState {
             SurrealRepo::new(db.clone()),
             user_service.clone(),
         );
+        let push_subscription_repo: Arc<dyn PushSubscriptionRepository> =
+            Arc::new(SurrealPushSubscriptionRepo::new(db.clone()));
+        // A malformed VAPID private key must not be reported as "not
+        // configured" - that reads as "push is off by choice" while the real
+        // problem is a bad key, and every notification silently goes nowhere.
+        let push_sender = match PushSender::new(&config.push, push_subscription_repo.clone()) {
+            Ok(sender) => sender.map(Arc::new),
+            Err(e) => {
+                tracing::error!(
+                    error = %e,
+                    "Push notifications disabled: the configured VAPID private key could not be \
+                     parsed. Check `push.vapid_private_key`, or unset it to use the generated pair."
+                );
+                None
+            }
+        };
+        let notification_service = NotificationService::with_broadcast(
+            SurrealRepo::new(db.clone()),
+            broadcast_service.clone(),
+            push_sender.clone(),
+        )
+        .with_push_links(presign_service.clone());
+        match &push_sender {
+            Some(_) => tracing::info!("Push notifications enabled (VAPID configured)"),
+            None => tracing::info!("Push notifications disabled (no usable VAPID key pair)"),
+        }
+
         let mut chat_service = ChatService::new(
             chat_repo,
             message_repo,
@@ -714,6 +741,7 @@ impl AppState {
             agent_prompt_builder,
         );
         chat_service.set_share_service(chat_share_service.clone());
+        chat_service.set_notification_service(notification_service.clone());
         if let Some(transcription) =
             crate::inference::transcription::TranscriptionService::from_config(
                 &config.voice,
@@ -784,33 +812,6 @@ impl AppState {
             harness.clone(),
             task_executor.clone(),
         ));
-
-        let push_subscription_repo: Arc<dyn PushSubscriptionRepository> =
-            Arc::new(SurrealPushSubscriptionRepo::new(db.clone()));
-        // A malformed VAPID private key must not be reported as "not
-        // configured" - that reads as "push is off by choice" while the real
-        // problem is a bad key, and every notification silently goes nowhere.
-        let push_sender = match PushSender::new(&config.push, push_subscription_repo.clone()) {
-            Ok(sender) => sender.map(Arc::new),
-            Err(e) => {
-                tracing::error!(
-                    error = %e,
-                    "Push notifications disabled: the configured VAPID private key could not be \
-                     parsed. Check `push.vapid_private_key`, or unset it to use the generated pair."
-                );
-                None
-            }
-        };
-        let notification_service = NotificationService::with_broadcast(
-            SurrealRepo::new(db.clone()),
-            broadcast_service.clone(),
-            push_sender.clone(),
-        )
-        .with_push_links(presign_service.clone());
-        match &push_sender {
-            Some(_) => tracing::info!("Push notifications enabled (VAPID configured)"),
-            None => tracing::info!("Push notifications disabled (no usable VAPID key pair)"),
-        }
 
         let state = Self {
             config_service,
