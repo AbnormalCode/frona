@@ -188,6 +188,8 @@ async fn build_mcp_supervisor() -> (
 fn make_server(id: &str, user_id: &str, status: McpServerStatus) -> McpServer {
     let now = chrono::Utc::now();
     McpServer {
+        last_error: None,
+        resolved_ref: None,
         id: id.to_string(),
         user_id: user_id.to_string(),
         handle: frona::core::Handle::try_new(format!("test-{id}")).expect("test handle invalid"),

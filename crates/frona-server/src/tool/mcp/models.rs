@@ -178,6 +178,13 @@ pub struct McpServer {
     pub server_info: Option<McpServerInfo>,
 
     pub package: McpPackage,
+    /// What the install put on disk, as opposed to what was asked for:
+    /// `{version}`, or `{version}+{short commit}` for a package from git.
+    /// `package.version` records the request, which for an unpinned install is
+    /// only "latest". `None` for a runtime whose installer records nothing
+    /// readable (PyPI) and for a remote server, which installs nothing at all.
+    #[serde(default)]
+    pub resolved_ref: Option<String>,
     pub command: String,
     pub args: Vec<String>,
     #[serde(default)]
@@ -186,6 +193,11 @@ pub struct McpServer {
     pub active_transport: String,
     pub env: BTreeMap<String, String>,
     pub status: McpServerStatus,
+    /// Why the last install or start gave up, in the words the server page
+    /// leads with. Cleared by anything that succeeds: a running server has
+    /// nothing left to explain.
+    #[serde(default)]
+    pub last_error: Option<String>,
     pub tool_cache: Vec<CachedMcpTool>,
     pub workspace_dir: String,
 
@@ -208,6 +220,8 @@ pub struct McpServerInstall {
     pub registry_id: Option<String>,
     pub manifest: Option<serde_json::Value>,
     pub display_name_override: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub description_override: Option<String>,
     /// When absent, the install service derives one via `sanitize_to_handle`.
     pub handle: Option<Handle>,
     #[serde(default)]

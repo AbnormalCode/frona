@@ -34,6 +34,8 @@ fn fake_server_binary() -> String {
 fn make_server(id: &str, binary: &str, workspace: &str) -> McpServer {
     let now = chrono::Utc::now();
     McpServer {
+        last_error: None,
+        resolved_ref: None,
         id: id.to_string(),
         user_id: "test-user".to_string(),
         handle: frona::core::Handle::try_new(format!("fake-{id}")).expect("test handle invalid"),

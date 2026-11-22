@@ -450,6 +450,60 @@ impl McpManager {
         }
     }
 
+    /// The `serverInfo` a running server reported at initialize. Every MCP
+    /// server states this, whatever it was installed from and whether it was
+    /// installed at all, which makes it the one version available for a remote
+    /// server. `None` once the server stops - it describes a live connection.
+    /// The `serverInfo` a running server reported at initialize. Every MCP
+    /// server states this, whatever it was installed from and whether it was
+    /// installed at all, which makes it the one version available for a remote
+    /// server. `None` once the server stops - it describes a live connection.
+    pub async fn peer_server_info(
+        &self,
+        server_id: &str,
+    ) -> Option<crate::tool::mcp::models::McpServerInfo> {
+        let conns = self.connections.read().await;
+        let peer = conns.get(server_id)?.client.peer_info()?;
+        // Naming yourself is optional in the protocol, so a server may connect
+        // without one.
+        let info = peer.server_info?;
+        Some(crate::tool::mcp::models::McpServerInfo {
+            name: info.name,
+            version: info.version,
+        })
+    }
+
+    pub async fn supports_resources(&self, server_id: &str) -> bool {
+        self.connections
+            .read()
+            .await
+            .get(server_id)
+            .is_some_and(|c| c.client.supports_resources())
+    }
+
+    pub async fn list_resources(
+        &self,
+        server_id: &str,
+    ) -> Result<Vec<rmcp::model::Resource>, AppError> {
+        let connections = self.connections.read().await;
+        let connection = connections
+            .get(server_id)
+            .ok_or_else(|| AppError::Tool(format!("MCP server not running: {server_id}")))?;
+        connection.client.list_resources().await
+    }
+
+    pub async fn read_resource(
+        &self,
+        server_id: &str,
+        uri: &str,
+    ) -> Result<rmcp::model::ReadResourceResult, AppError> {
+        let connections = self.connections.read().await;
+        let connection = connections
+            .get(server_id)
+            .ok_or_else(|| AppError::Tool(format!("MCP server not running: {server_id}")))?;
+        connection.client.read_resource(uri).await
+    }
+
     pub async fn stop(&self, server_id: &str) -> Result<(), AppError> {
         let Some(mut connection) = self.connections.write().await.remove(server_id) else {
             return Ok(());
@@ -587,6 +641,17 @@ impl McpManager {
 
 pub const STARTED_STATUS: McpServerStatus = McpServerStatus::Running;
 
+/// Empty a server's log without removing it. The running child holds the file
+/// open in append mode, so its next write lands at the new end rather than
+/// leaving a hole where the old content was.
+pub fn clear_log_file(path: &std::path::Path) -> std::io::Result<()> {
+    match std::fs::OpenOptions::new().write(true).open(path) {
+        Ok(file) => file.set_len(0),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(e) => Err(e),
+    }
+}
+
 pub fn read_log_file(path: &std::path::Path, max_bytes: u64) -> String {
     use std::io::{Read, Seek, SeekFrom};
     let Ok(mut file) = std::fs::File::open(path) else {
@@ -652,6 +717,30 @@ fn filter_tools_for_user(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn clear_log_file_keeps_appending_writer_at_start() {
+        use std::io::Write;
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("server.log");
+        let mut writer = std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(&path)
+            .unwrap();
+        writer.write_all(b"old line\n").unwrap();
+
+        clear_log_file(&path).unwrap();
+        writer.write_all(b"new line\n").unwrap();
+
+        assert_eq!(read_log_file(&path, 1024), "new line\n");
+    }
+
+    #[test]
+    fn clear_log_file_tolerates_missing_log() {
+        let dir = tempfile::tempdir().unwrap();
+        assert!(clear_log_file(&dir.path().join("absent.log")).is_ok());
+    }
 
     fn td(id: &str, provider_id: &str) -> ToolDefinition {
         ToolDefinition {

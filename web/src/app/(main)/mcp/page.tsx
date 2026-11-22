@@ -1,15 +1,15 @@
 "use client";
 
-import { ConfigurationSidebar } from "@/components/layout/configuration-sidebar";
-
-import { useState, useEffect, useCallback, useRef, Suspense } from "react";
+import { useState, useEffect, useCallback, Suspense } from "react";
 import { useSearchParams, useRouter } from "next/navigation";
-import { ArrowLeftIcon, CpuChipIcon, PlayIcon, StopIcon, TrashIcon, PlusIcon, InformationCircleIcon, CommandLineIcon, DocumentTextIcon, KeyIcon, Cog6ToothIcon } from "@heroicons/react/24/outline";
-import { api, API_URL, getAccessToken } from "@/lib/api-client";
+import { ArrowLeftIcon, ArrowPathIcon, CpuChipIcon, PlayIcon, StopIcon, TrashIcon, PlusIcon, InformationCircleIcon, CommandLineIcon, DocumentTextIcon, KeyIcon, Cog6ToothIcon, EyeIcon, EyeSlashIcon } from "@heroicons/react/24/outline";
+import { api } from "@/lib/api-client";
 import { SectionHeader, SectionPanel, Field, TextInput } from "@/components/settings/field";
 import { formatDistanceToNow } from "date-fns";
 import { SandboxSection } from "@/components/agents/configure/sandbox-section";
 import { AddCredentialForm, type VaultGrant, type VaultConnection, type PendingCredential } from "@/components/agents/configure/creds-section";
+import { ConfigurationSidebar } from "@/components/layout/configuration-sidebar";
+import { McpLogViewer } from "@/components/mcp/mcp-log-viewer";
 
 interface McpServer {
   id: string;
@@ -19,8 +19,12 @@ interface McpServer {
   repository_url: string | null;
   registry_id: string | null;
   status: string;
+  /** Why the last install or start gave up. Outlives the request that produced it. */
+  last_error: string | null;
   command: string;
   args: string[];
+  resolved_ref: string | null;
+  server_version: string | null;
   tool_count: number;
   active_transport: string;
   transports: Array<
@@ -74,6 +78,16 @@ const STATUS_BADGE: Record<string, string> = {
   starting: "bg-blue-400/15 text-blue-400",
 };
 
+/** Values under names like these are hidden until asked for, in case of shoulder-surfing. */
+function looksSensitive(name: string): boolean {
+  return /(KEY|TOKEN|SECRET|PASSWORD|PASSWD|CREDENTIAL|AUTH)/i.test(name);
+}
+
+function sameEnv(a: Record<string, string>, b: Record<string, string>): boolean {
+  const ak = Object.keys(a);
+  return ak.length === Object.keys(b).length && ak.every((k) => b[k] === a[k]);
+}
+
 function McpServerPage() {
   const searchParams = useSearchParams();
   const router = useRouter();
@@ -83,12 +97,13 @@ function McpServerPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [actionLoading, setActionLoading] = useState(false);
+  const [updateNote, setUpdateNote] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [dirty, setDirty] = useState(false);
-  const [logs, setLogs] = useState<string>("");
-  const [logsLoading, setLogsLoading] = useState(false);
-  const [followLogs, setFollowLogs] = useState(true);
-  const logsEndRef = useRef<HTMLDivElement>(null);
+  /** Set after a save that changed a running server's config, until it is restarted. */
+  const [restartRequired, setRestartRequired] = useState(false);
+  const [revealedEnv, setRevealedEnv] = useState<Set<string>>(new Set());
+  const [envKeyError, setEnvKeyError] = useState<string | null>(null);
 
   const sectionParam = searchParams.get("section");
   const initialSection = SECTIONS.some((s) => s.id === sectionParam) ? (sectionParam as SectionId) : "status";
@@ -210,66 +225,6 @@ function McpServerPage() {
     reload();
   }, [reload]);
 
-  useEffect(() => {
-    if (activeSection !== "logs" || !serverId) return;
-    setLogs("");
-    setLogsLoading(true);
-
-    const controller = new AbortController();
-    (async () => {
-      const token = getAccessToken();
-      const headers: Record<string, string> = {};
-      if (token) headers["Authorization"] = `Bearer ${token}`;
-
-      let res: Response;
-      try {
-        res = await fetch(`${API_URL}/api/mcp/servers/${serverId}/logs/stream`, {
-          headers,
-          signal: controller.signal,
-          credentials: "include",
-        });
-      } catch {
-        setLogsLoading(false);
-        return;
-      }
-
-      if (!res.ok || !res.body) {
-        setLogsLoading(false);
-        return;
-      }
-
-      const reader = res.body.getReader();
-      const decoder = new TextDecoder();
-      let buffer = "";
-
-      try {
-        while (true) {
-          const { done, value } = await reader.read();
-          if (done) break;
-          setLogsLoading(false);
-          buffer += decoder.decode(value, { stream: true });
-          const lines = buffer.split("\n");
-          buffer = lines.pop() ?? "";
-          for (const line of lines) {
-            if (line.startsWith("data: ")) {
-              setLogs((prev) => prev + line.slice(6) + "\n");
-            }
-          }
-        }
-      } catch {
-        // aborted or connection lost
-      }
-    })();
-
-    return () => controller.abort();
-  }, [activeSection, serverId]);
-
-  useEffect(() => {
-    if (followLogs && logsEndRef.current) {
-      logsEndRef.current.scrollIntoView({ behavior: "smooth" });
-    }
-  }, [logs, followLogs]);
-
   const save = async () => {
     if (!server) return;
     setSaving(true);
@@ -279,9 +234,13 @@ function McpServerPage() {
       for (const [k, v] of Object.entries(envValues)) {
         if (v.trim()) extra_env[k] = v.trim();
       }
-      await api.patch(`/api/mcp/servers/${serverId}`, {
+      // The server replaces its env with whatever is sent, so the map goes
+      // whenever it differs - including when it is now empty, which is how
+      // the last variable gets removed.
+      const envChanged = !sameEnv(extra_env, server.env ?? {});
+      const res = await api.patch<{ restart_required: boolean }>(`/api/mcp/servers/${serverId}`, {
         description: description !== (server.description ?? "") ? description : undefined,
-        extra_env,
+        extra_env: envChanged ? extra_env : undefined,
         sandbox_policy: sandboxConfig
           ? (() => {
               const entries = (sandboxConfig.shared_paths ?? []).filter((e) => e.path);
@@ -304,6 +263,7 @@ function McpServerPage() {
       setPendingCreds([]);
       setDeletedGrantIds(new Set());
       setDirty(false);
+      if (res.restart_required) setRestartRequired(true);
     } catch (e: unknown) {
       setError(e instanceof Error ? e.message : "Save failed");
     } finally {
@@ -316,8 +276,24 @@ function McpServerPage() {
     setError(null);
     try {
       await api.post(`/api/mcp/servers/${serverId}/start`, {});
+      setRestartRequired(false);
     } catch (e: unknown) {
       setError(e instanceof Error ? e.message : "Start failed");
+    } finally {
+      await reload();
+      setActionLoading(false);
+    }
+  };
+
+  const restart = async () => {
+    setActionLoading(true);
+    setError(null);
+    try {
+      await api.post(`/api/mcp/servers/${serverId}/stop`, {});
+      await api.post(`/api/mcp/servers/${serverId}/start`, {});
+      setRestartRequired(false);
+    } catch (e: unknown) {
+      setError(e instanceof Error ? e.message : "Restart failed");
     } finally {
       await reload();
       setActionLoading(false);
@@ -331,6 +307,28 @@ function McpServerPage() {
       await reload();
     } catch { /* ignore */ }
     finally { setActionLoading(false); }
+  };
+
+  const update = async () => {
+    setActionLoading(true);
+    setError(null);
+    setUpdateNote(null);
+    try {
+      const res = await api.post<{ changed: boolean; previous_ref: string | null; restarted: boolean }>(
+        `/api/mcp/servers/${serverId}/update`,
+        {}
+      );
+      await reload();
+      setUpdateNote(
+        res.changed
+          ? `Updated from ${res.previous_ref ?? "an unknown version"}.${res.restarted ? " Restarted." : ""}`
+          : "Already up to date."
+      );
+    } catch (e: unknown) {
+      setError(e instanceof Error ? e.message : "Update failed");
+    } finally {
+      setActionLoading(false);
+    }
   };
 
   const uninstall = async () => {
@@ -373,43 +371,64 @@ function McpServerPage() {
 
   return (
     <div className="flex h-full min-h-0 min-w-0 bg-surface">
-      {/* Sidebar */}
+      {/* Sidebar — fixed column on desktop, drawer on mobile */}
       <ConfigurationSidebar
         backHref="/settings#mcp"
         backLabel="Back to Settings"
+        header={
+          <>
+            <div className="flex items-center gap-2 mb-4">
+              {ownerAvatar ? (
+                <img src={ownerAvatar} alt="" className="h-8 w-8 rounded-lg shrink-0" />
+              ) : (
+                <CpuChipIcon className="h-8 w-8 text-text-tertiary shrink-0" />
+              )}
+              <div className="min-w-0">
+                <h2 className="text-sm font-semibold text-text-primary truncate">{displayName}</h2>
+                <span className={`inline-block rounded-full px-2 py-0.5 text-[10px] font-medium ${STATUS_BADGE[server.status] ?? STATUS_BADGE.installed}`}>
+                  {server.status}
+                </span>
+              </div>
+            </div>
+          </>
+        }
         sections={SECTIONS}
         activeSection={activeSection}
         onSectionChange={setActiveSection}
-        header={
-          <div className="flex items-center gap-2 mb-4">
-            {ownerAvatar ? (
-              <img src={ownerAvatar} alt="" className="h-8 w-8 rounded-lg shrink-0" />
-            ) : (
-              <CpuChipIcon className="h-8 w-8 text-text-tertiary shrink-0" />
-            )}
-            <div className="min-w-0">
-              <h2 className="text-sm font-semibold text-text-primary truncate">{displayName}</h2>
-              <span className={`inline-block rounded-full px-2 py-0.5 text-[10px] font-medium ${STATUS_BADGE[server.status] ?? STATUS_BADGE.installed}`}>
-                {server.status}
-              </span>
-            </div>
-          </div>
-        }
       />
 
       {/* Content */}
       <div className="flex-1 min-h-0 min-w-0 overflow-y-auto [overflow-wrap:anywhere]">
         <div className="max-w-2xl mx-auto p-4 md:p-8 space-y-6">
+          {restartRequired && server.status === "running" && (
+            <div className="rounded-lg border border-yellow-500/30 bg-yellow-500/10 px-4 py-3 text-sm text-yellow-500 flex items-center justify-between gap-3">
+              <span>Saved. Restart the server for the new configuration to take effect.</span>
+              <button
+                type="button"
+                onClick={restart}
+                disabled={actionLoading}
+                className="inline-flex items-center gap-1.5 rounded-lg border border-yellow-500/40 px-3 py-1 text-xs font-medium hover:bg-yellow-500/10 disabled:opacity-50 transition shrink-0"
+              >
+                <ArrowPathIcon className="h-3.5 w-3.5" />
+                {actionLoading ? "Restarting..." : "Restart now"}
+              </button>
+            </div>
+          )}
+
           {activeSection === "status" && (
             <div className="space-y-6">
               <SectionHeader title="Status" description="Server information and controls" icon={InformationCircleIcon} />
-              {error && (
-                <div className="rounded-lg border border-red-500/30 bg-red-500/10 px-4 py-3 text-sm text-red-400 flex items-center justify-between">
-                  <span>{error}</span>
+              {/* The error from an action this visit, and - when there is none -
+                  the one the server is still carrying from an earlier one. A
+                  server found sitting at "failed" has to say why without the
+                  reader going to the logs to find out. */}
+              {(error || server.last_error) && (
+                <div className="rounded-lg border border-red-500/30 bg-red-500/10 px-4 py-3 text-sm text-red-400 flex items-start justify-between gap-3">
+                  <span className="min-w-0 whitespace-pre-wrap break-words">{error ?? server.last_error}</span>
                   <button
                     type="button"
                     onClick={() => { setError(null); setActiveSection("logs"); }}
-                    className="text-xs text-red-300 hover:text-red-200 underline shrink-0 ml-3"
+                    className="text-xs text-red-300 hover:text-red-200 underline shrink-0"
                   >
                     View logs
                   </button>
@@ -465,6 +484,17 @@ function McpServerPage() {
                   <span className="text-sm text-text-tertiary">Tools</span>
                   <span className="text-sm text-text-primary">{server.tool_count}</span>
                 </div>
+                {(server.resolved_ref || server.server_version) && (
+                  <div className="px-4 py-3 flex justify-between">
+                    <span className="text-sm text-text-tertiary">Version</span>
+                    <span className="text-sm text-text-primary font-mono ml-4 truncate">
+                      {server.resolved_ref ?? server.server_version}
+                      {server.resolved_ref && server.server_version && server.server_version !== server.resolved_ref && (
+                        <span className="text-text-tertiary"> · reports {server.server_version}</span>
+                      )}
+                    </span>
+                  </div>
+                )}
                 <div className="px-4 py-3 flex justify-between">
                   <span className="text-sm text-text-tertiary">Installed</span>
                   <span className="text-sm text-text-primary">{formatDistanceToNow(new Date(server.installed_at), { addSuffix: true })}</span>
@@ -498,6 +528,18 @@ function McpServerPage() {
                     {actionLoading ? "Stopping..." : "Stop"}
                   </button>
                 )}
+                {/* A remote server installs nothing locally, so it carries no command and has nothing to reinstall. */}
+                {server.command !== "" && (
+                  <button
+                    onClick={update}
+                    disabled={actionLoading}
+                    title="Reinstall from the same source, keeping credentials, policy and agent access"
+                    className="inline-flex items-center gap-1.5 rounded-lg border border-border px-4 py-2 text-sm font-medium text-text-primary hover:bg-surface-tertiary disabled:opacity-50 transition"
+                  >
+                    <ArrowPathIcon className="h-4 w-4" />
+                    {actionLoading ? "Updating..." : "Update"}
+                  </button>
+                )}
                 <button
                   onClick={uninstall}
                   disabled={actionLoading}
@@ -507,6 +549,9 @@ function McpServerPage() {
                   Uninstall
                 </button>
               </div>
+              {updateNote && (
+                <p className="text-xs text-text-tertiary">{updateNote}</p>
+              )}
             </div>
           )}
 
@@ -693,16 +738,34 @@ function McpServerPage() {
                           defaultValue={key}
                           onBlur={(e) => {
                             const newKey = e.target.value.toUpperCase().replace(/[^A-Z0-9_]/g, "");
-                            if (newKey && newKey !== key && !declaredNames.has(newKey)) {
-                              if (grant) return;
-                              setEnvValues((prev) => {
-                                const next = { ...prev };
-                                next[newKey] = next[key] ?? "";
-                                delete next[key];
-                                return next;
-                              });
-                              setDirty(true);
+                            if (grant || newKey === key) return;
+                            const problem = !newKey
+                              ? "A variable needs a name."
+                              : /^[0-9]/.test(newKey)
+                                ? `${newKey} can't start with a digit.`
+                                : declaredNames.has(newKey) || envValues[newKey] !== undefined || allCustomKeys.includes(newKey)
+                                  ? `${newKey} is already defined.`
+                                  : null;
+                            if (problem) {
+                              setEnvKeyError(problem);
+                              e.target.value = key;
+                              return;
                             }
+                            setEnvKeyError(null);
+                            setRevealedEnv((prev) => {
+                              if (!prev.has(key)) return prev;
+                              const next = new Set(prev);
+                              next.delete(key);
+                              next.add(newKey);
+                              return next;
+                            });
+                            setEnvValues((prev) => {
+                              const next = { ...prev };
+                              next[newKey] = next[key] ?? "";
+                              delete next[key];
+                              return next;
+                            });
+                            setDirty(true);
                           }}
                           disabled={!!grant}
                           placeholder="VARIABLE_NAME"
@@ -752,17 +815,35 @@ function McpServerPage() {
                               </div>
                             );
                           }
+                          const masked = looksSensitive(key) && !revealedEnv.has(key);
                           return (
-                            <input
-                              type="text"
-                              value={envValues[key] ?? ""}
-                              onChange={(e) => {
-                                setEnvValues((prev) => ({ ...prev, [key]: e.target.value }));
-                                setDirty(true);
-                              }}
-                              placeholder="Value"
-                              className="w-full rounded-lg border border-border bg-surface px-3 py-2 text-sm text-text-primary placeholder:text-text-tertiary focus:border-accent focus:outline-none font-mono"
-                            />
+                            <div className="relative">
+                              <input
+                                type={masked ? "password" : "text"}
+                                value={envValues[key] ?? ""}
+                                onChange={(e) => {
+                                  setEnvValues((prev) => ({ ...prev, [key]: e.target.value }));
+                                  setDirty(true);
+                                }}
+                                placeholder="Value"
+                                autoComplete="off"
+                                className={`w-full rounded-lg border border-border bg-surface px-3 py-2 text-sm text-text-primary placeholder:text-text-tertiary focus:border-accent focus:outline-none font-mono ${looksSensitive(key) ? "pr-9" : ""}`}
+                              />
+                              {looksSensitive(key) && (
+                                <button
+                                  type="button"
+                                  onClick={() => setRevealedEnv((prev) => {
+                                    const next = new Set(prev);
+                                    if (next.has(key)) next.delete(key); else next.add(key);
+                                    return next;
+                                  })}
+                                  aria-label={masked ? `Show ${key}` : `Hide ${key}`}
+                                  className="absolute right-2 top-1/2 -translate-y-1/2 p-1 text-text-tertiary hover:text-text-primary transition"
+                                >
+                                  {masked ? <EyeIcon className="h-4 w-4" /> : <EyeSlashIcon className="h-4 w-4" />}
+                                </button>
+                              )}
+                            </div>
                           );
                         })()}
                       </div>
@@ -787,6 +868,12 @@ function McpServerPage() {
                     );
                   })}
                   </div>
+                  {allCustomKeys.length === 0 && (
+                    <p className="text-sm text-text-tertiary">
+                      No custom variables. Add one to pass extra settings to the server process, or a credential to inject a secret from a vault.
+                    </p>
+                  )}
+                  {envKeyError && <p className="text-xs text-red-400">{envKeyError}</p>}
                   <div className="relative">
                     <button
                       onClick={() => setShowAddMenu((v) => !v)}
@@ -841,51 +928,15 @@ function McpServerPage() {
           )}
 
           {activeSection === "logs" && (
-            <div className="space-y-4">
-              <div className="mb-5 pb-3 border-b border-border flex items-end justify-between gap-3">
-                <div>
-                  <h3 className="text-lg font-semibold text-text-primary">Logs</h3>
-                  <p className="text-sm text-text-tertiary mt-1">Server stderr output</p>
-                </div>
-                <label className="flex items-center gap-2 text-xs text-text-tertiary shrink-0">
-                  <input
-                    type="checkbox"
-                    checked={followLogs}
-                    onChange={(e) => setFollowLogs(e.target.checked)}
-                    className="h-3.5 w-3.5 rounded border-border text-accent focus:ring-accent"
-                  />
-                  Follow
-                </label>
-              </div>
-              {logsLoading && !logs && (
-                <div className="flex items-center justify-center py-12">
-                  <div className="h-5 w-5 animate-spin rounded-full border-2 border-accent border-t-transparent" />
-                </div>
-              )}
-              {!logsLoading && !logs && (
-                <p className="text-sm text-text-tertiary py-8 text-center">No logs available. Start the server to see output.</p>
-              )}
-              {logs && (
-                <div
-                  className="rounded-xl border border-border bg-[#0d1117] p-4 max-h-[600px] overflow-y-auto overflow-x-auto"
-                  onScroll={(e) => {
-                    const el = e.currentTarget;
-                    const atBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 30;
-                    if (followLogs !== atBottom) setFollowLogs(atBottom);
-                  }}
-                >
-                  <pre className="text-xs font-mono text-[#c9d1d9] whitespace-pre-wrap break-words leading-5">{logs}</pre>
-                  <div ref={logsEndRef} />
-                </div>
-              )}
-            </div>
+            <McpLogViewer serverId={server.id} serverStatus={server.status} />
           )}
 
           {/* Save bar */}
           {activeSection !== "logs" && activeSection !== "status" && (
             <div className="pt-4 border-t border-border flex items-center justify-end gap-2">
+              {error && <span className="mr-auto text-xs text-red-400 min-w-0 break-words">{error}</span>}
               <button
-                onClick={() => { setDirty(false); setPendingCreds([]); setDeletedGrantIds(new Set()); reload(); }}
+                onClick={() => { setDirty(false); setPendingCreds([]); setDeletedGrantIds(new Set()); setEnvKeyError(null); reload(); }}
                 disabled={!dirty}
                 className="rounded-lg border border-border px-4 py-2 text-sm font-medium text-text-secondary hover:bg-surface-tertiary disabled:opacity-50 transition"
               >

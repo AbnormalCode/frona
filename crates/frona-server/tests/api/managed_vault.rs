@@ -476,6 +476,8 @@ async fn mcp_process_restart_resolves_current_values_without_mutating_running_pr
     let first = credential(&state, None, "one", "alice").await;
     let now = chrono::Utc::now();
     let server = McpServer {
+        last_error: None,
+        resolved_ref: None,
         id: "managed-mcp".into(),
         user_id: ctx.user.id.clone(),
         handle: frona::handle!("managed-mcp"),

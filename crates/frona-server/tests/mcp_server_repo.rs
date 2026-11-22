@@ -18,6 +18,8 @@ async fn test_db() -> Surreal<Db> {
 fn make_server(id: &str, user_id: &str, handle: &str, status: McpServerStatus) -> McpServer {
     let now = chrono::Utc::now();
     McpServer {
+        last_error: None,
+        resolved_ref: None,
         id: id.to_string(),
         user_id: user_id.to_string(),
         handle: frona::core::Handle::try_new(handle).expect("test handle invalid"),

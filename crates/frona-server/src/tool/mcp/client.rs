@@ -3,7 +3,7 @@ use std::sync::{Arc, Weak};
 use rmcp::ServiceExt;
 use rmcp::model::{
     CallToolRequestParams, CallToolResult, ClientCapabilities, ClientConfig, Implementation,
-    ServerPeerInfo, Tool,
+    ReadResourceRequestParams, ReadResourceResult, Resource, ServerPeerInfo, Tool,
 };
 use rmcp::service::{NotificationContext, RoleClient, RunningService};
 use rmcp::transport::IntoTransport;
@@ -20,16 +20,21 @@ struct ToolRegistration {
     service: Weak<McpServerService>,
     user_id: String,
     handle: String,
+    /// Set when the server declared `resources`: the id its resource tools run
+    /// against. Gates the two synthetic tools, so a tools-only server grows
+    /// nothing.
+    resources_server_id: Option<String>,
 }
 
 impl ToolRegistration {
     async fn publish(&self, tools: &[CachedMcpTool]) {
         if let Some(service) = self.service.upgrade() {
             service
-                .register_tools(
+                .register_tools_with_resources(
                     &self.user_id,
                     &self.handle,
                     tool_definitions(&self.handle, tools),
+                    self.resources_server_id.clone(),
                 )
                 .await;
         }
@@ -157,12 +162,14 @@ impl McpClient {
         service: Weak<McpServerService>,
         user_id: &str,
         handle: &str,
+        server_id: &str,
     ) {
         let mut registration = self.registration.lock().await;
         let target = ToolRegistration {
             service,
             user_id: user_id.into(),
             handle: handle.into(),
+            resources_server_id: self.supports_resources().then(|| server_id.to_string()),
         };
         target.publish(&self.cached_tools().await).await;
         *registration = Some(target);
@@ -185,6 +192,30 @@ impl McpClient {
             .call_tool(params)
             .await
             .map_err(|e| AppError::Tool(format!("MCP call_tool failed: {e}")))
+    }
+
+    /// Whether the server declared the `resources` capability during initialize.
+    /// Servers that never offer resources should not grow resource tools they would
+    /// only reject.
+    pub fn supports_resources(&self) -> bool {
+        self.running
+            .peer_info()
+            .and_then(|info| info.capabilities.resources.clone())
+            .is_some()
+    }
+
+    pub async fn list_resources(&self) -> Result<Vec<Resource>, AppError> {
+        self.running
+            .list_all_resources()
+            .await
+            .map_err(|e| AppError::Tool(format!("MCP resources/list failed: {e}")))
+    }
+
+    pub async fn read_resource(&self, uri: &str) -> Result<ReadResourceResult, AppError> {
+        self.running
+            .read_resource(ReadResourceRequestParams::new(uri.to_string()))
+            .await
+            .map_err(|e| AppError::Tool(format!("MCP resources/read failed for {uri}: {e}")))
     }
 
     pub fn peer_info(&self) -> Option<ServerPeerInfo> {

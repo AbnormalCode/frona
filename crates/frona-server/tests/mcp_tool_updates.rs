@@ -128,6 +128,8 @@ impl Fixture {
         let now = chrono::Utc::now();
         SurrealRepo::<McpServer>::new(db)
             .create(&McpServer {
+                last_error: None,
+                resolved_ref: None,
                 id: "dynamic".into(),
                 user_id: ctx.user.id.clone(),
                 handle: frona::handle!("dynamic"),

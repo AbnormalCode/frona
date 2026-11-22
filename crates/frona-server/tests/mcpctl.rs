@@ -200,6 +200,8 @@ impl Fixture {
                 .collect();
             let now = chrono::Utc::now();
             let server = McpServer {
+                last_error: None,
+                resolved_ref: None,
                 id: handle.into(),
                 user_id: ctx.user.id.clone(),
                 handle: frona::core::Handle::try_new(handle).unwrap(),
