@@ -12,6 +12,7 @@ pub mod streaming;
 pub mod structured;
 pub mod tool_call;
 pub mod tool_loop;
+pub mod transcription;
 pub mod usage;
 
 pub use self::usage::{CompactionTarget, InferenceKind, UsageContext};

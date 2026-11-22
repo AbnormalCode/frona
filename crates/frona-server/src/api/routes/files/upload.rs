@@ -121,6 +121,7 @@ pub(crate) async fn upload_file(
         .filter(|u| !u.is_empty());
 
     Ok(Json(Attachment {
+        transcript: None,
         filename: final_filename,
         content_type,
         size_bytes,

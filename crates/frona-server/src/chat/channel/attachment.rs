@@ -189,6 +189,7 @@ mod tests {
 
     fn att(filename: &str, content_type: &str, owner: &str) -> Attachment {
         Attachment {
+            transcript: None,
             filename: filename.into(),
             content_type: content_type.into(),
             size_bytes: 0,

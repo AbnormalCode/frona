@@ -13,6 +13,11 @@ pub struct Attachment {
     pub owner: String,
     pub path: String,
     pub url: Option<String>,
+    /// What a voice note says, filled in once when the message is saved (see
+    /// `inference::transcription`). `None` for anything that isn't audio, and
+    /// for audio sent while no transcription provider was configured.
+    #[serde(default)]
+    pub transcript: Option<String>,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -72,6 +77,7 @@ pub async fn resolve_workspace_attachment(
     let content_type = super::detect_content_type(&filename).to_string();
 
     Ok(Attachment {
+        transcript: None,
         filename,
         content_type,
         size_bytes: metadata.len(),
@@ -150,6 +156,7 @@ mod tests {
     #[test]
     fn attachment_url_round_trips() {
         let att = Attachment {
+            transcript: None,
             filename: "f.txt".into(),
             content_type: "text/plain".into(),
             size_bytes: 10,
@@ -167,6 +174,7 @@ mod tests {
     #[test]
     fn attachment_url_none_omitted_from_json() {
         let att = Attachment {
+            transcript: None,
             filename: "f.txt".into(),
             content_type: "text/plain".into(),
             size_bytes: 10,

@@ -430,6 +430,7 @@ async fn test_cascade_delete_task_removes_chat_and_messages() {
 
 fn test_attachment(filename: &str, owner: &str, path: &str) -> Attachment {
     Attachment {
+        transcript: None,
         filename: filename.to_string(),
         content_type: "text/plain".to_string(),
         size_bytes: 100,

@@ -521,6 +521,7 @@ impl App {
             .unwrap();
         let attachments = vec![
             Attachment {
+                transcript: None,
                 filename: "diagram.png".into(),
                 content_type: "image/png".into(),
                 size_bytes: 19,
@@ -529,6 +530,7 @@ impl App {
                 url: None,
             },
             Attachment {
+                transcript: None,
                 filename: "report.txt".into(),
                 content_type: "text/plain".into(),
                 size_bytes: 10,
@@ -914,6 +916,7 @@ async fn oversized_protected_request_errors_before_summarization_and_remains_rec
     let (db, compactor, messages, summary) = fixture().await;
     let mut request = row("request", 1, MessageRole::User, &"huge ".repeat(1000));
     request.attachments.push(Attachment {
+        transcript: None,
         filename: "image.png".into(),
         content_type: "image/png".into(),
         size_bytes: 12,

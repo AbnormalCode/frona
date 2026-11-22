@@ -8,7 +8,7 @@ import { LexicalComposerInput } from "@assistant-ui/react-lexical";
 import { useLexicalComposerContext } from "@lexical/react/LexicalComposerContext";
 import { COMMAND_PRIORITY_NORMAL, KEY_ENTER_COMMAND } from "lexical";
 import type { Unstable_TriggerItem } from "@assistant-ui/core";
-import { PaperAirplaneIcon, StopIcon, PlusIcon, XMarkIcon } from "@heroicons/react/24/solid";
+import { PaperAirplaneIcon, StopIcon, PlusIcon, XMarkIcon, MicrophoneIcon } from "@heroicons/react/24/solid";
 import { ArrowUpTrayIcon, CloudIcon, FolderOpenIcon } from "@heroicons/react/24/outline";
 import { ComposerPastePlugin } from "./composer-paste-plugin";
 import { FileBrowserModal } from "@/components/chat/file-browser-modal";
@@ -20,6 +20,8 @@ import {
 } from "@/components/chat/frona-trigger-adapter";
 import { registerBackendAttachment, getBackendAttachments } from "@/lib/use-chat-runtime";
 import { useContext } from "react";
+import { useToast } from "@/lib/toast";
+import { formatElapsed, useVoiceRecorder, voiceRecordingSupported } from "@/lib/use-voice-recorder";
 import { usePendingTools } from "@/lib/pending-tools-context";
 import { ChatContext } from "@/lib/chat-context";
 import { useCommands } from "@/lib/use-commands";
@@ -112,6 +114,7 @@ export function FronaComposer({
   const menuButtonRef = useRef<HTMLButtonElement>(null);
 
   const threadRunning = useThreadIsRunning();
+  const editorBridgeRef = useRef<HTMLDivElement>(null);
   const pendingTools = usePendingTools();
   const chatCtx = useContext(ChatContext);
   const commands = useCommands(chatCtx?.chatId);
@@ -181,6 +184,37 @@ export function FronaComposer({
       wizard.setCurrentIndex(safeIndex + 1);
     }
   }, [currentPendingTool, wizard, composerRuntime, pendingTools, safeIndex, chatCtx?.chatId]);
+
+  const toast = useToast();
+  const recorder = useVoiceRecorder(toast.error);
+  // Read after mount: the server render has no `navigator`, and guessing there
+  // would mismatch hydration.
+  const [recordingSupported, setRecordingSupported] = useState(false);
+  useEffect(() => setRecordingSupported(voiceRecordingSupported()), []);
+  const [sendingVoiceNote, setSendingVoiceNote] = useState(false);
+
+  // Stop recording and send the note straight away, like a messaging app. Any
+  // text already typed rides along as the message body.
+  const handleSendVoiceNote = useCallback(async () => {
+    const file = await recorder.stop();
+    if (!file) return;
+    setSendingVoiceNote(true);
+    try {
+      // The attachment adapter uploads and toasts its own failures.
+      await composerRuntime.addAttachment(file);
+    } catch {
+      return;
+    } finally {
+      setSendingVoiceNote(false);
+    }
+    if (threadRunning) {
+      // The agent started a turn while we were recording; sending now would be
+      // refused, so leave the note attached for the user to send.
+      toast.info("Voice note attached. Send it when the agent has finished.");
+      return;
+    }
+    editorBridgeRef.current?.closest("form")?.requestSubmit();
+  }, [recorder, composerRuntime, threadRunning, toast]);
 
   const activePlaceholder = currentPendingTool
     ? "Type your answer or click an option above..."
@@ -283,7 +317,7 @@ export function FronaComposer({
               components={{ Attachment: ComposerAttachmentBadge }}
             />
           </div>
-          <div>
+          <div ref={editorBridgeRef}>
             <LexicalComposerInput
               autoFocus
               placeholder={activePlaceholder}
@@ -344,6 +378,45 @@ export function FronaComposer({
               </div>
             </div>
             <div className="flex items-center gap-1">
+              {recordingSupported && !currentPendingTool && (recorder.state === "recording" || !threadRunning) && (
+                recorder.state === "recording" ? (
+                  <>
+                    <span
+                      className="flex items-center gap-1.5 px-1 text-xs tabular-nums text-text-secondary"
+                      aria-live="polite"
+                    >
+                      <span className="h-2 w-2 animate-pulse rounded-full bg-red-500" aria-hidden />
+                      {formatElapsed(recorder.elapsedMs)}
+                    </span>
+                    <button
+                      type="button"
+                      onClick={recorder.cancel}
+                      title="Discard recording"
+                      className="shrink-0 rounded-lg p-1.5 text-text-secondary hover:text-text-primary transition"
+                    >
+                      <XMarkIcon className="h-5 w-5" />
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => void handleSendVoiceNote()}
+                      title="Send voice note"
+                      className="shrink-0 rounded-lg p-1.5 text-accent hover:opacity-80 transition"
+                    >
+                      <PaperAirplaneIcon className="h-5 w-5" />
+                    </button>
+                  </>
+                ) : (
+                  <button
+                    type="button"
+                    onClick={() => void recorder.start()}
+                    disabled={recorder.state === "starting" || sendingVoiceNote}
+                    title={sendingVoiceNote ? "Sending voice note…" : "Record a voice note"}
+                    className="shrink-0 rounded-lg p-1.5 text-text-secondary hover:text-text-primary transition disabled:opacity-50"
+                  >
+                    <MicrophoneIcon className="h-5 w-5" />
+                  </button>
+                )
+              )}
               {wizard?.submitted && threadRunning ? (
                 <ComposerPrimitive.Cancel asChild>
                   <button
@@ -366,6 +439,7 @@ export function FronaComposer({
                 </ComposerPrimitive.Cancel>
               </ThreadPrimitive.If>
               <ThreadPrimitive.If running={false}>
+                {recorder.state === "recording" ? null : (
                   <button
                     type="submit"
                     aria-label="Send message"
@@ -374,6 +448,7 @@ export function FronaComposer({
                   >
                     <PaperAirplaneIcon className="h-5 w-5" />
                   </button>
+                )}
               </ThreadPrimitive.If>
               </>
               )}

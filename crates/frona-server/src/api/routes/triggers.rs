@@ -254,6 +254,7 @@ async fn trigger_agent(
             .await
             .map_err(|e| AppError::Internal(format!("could not save trigger image: {e}")))?;
         attachments.push(Attachment {
+            transcript: None,
             path: format!("{relative_dir}/{filename}"),
             filename,
             content_type: media_type.to_string(),

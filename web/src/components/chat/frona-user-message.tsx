@@ -89,6 +89,14 @@ function useAttachmentUrl(attachment: Attachment, isImage: boolean) {
   };
 }
 
+export function VoiceNoteTranscript({ text }: { text: string }) {
+  return (
+    <p className="max-w-xs whitespace-pre-wrap text-sm italic text-text-secondary" data-testid="voice-note-transcript">
+      “{text}”
+    </p>
+  );
+}
+
 function UserAttachment({ attachment }: { attachment: Attachment }) {
   const isImage = attachment.type === "image" || !!attachment.contentType?.startsWith("image/");
   const media = mediaKind(attachment.contentType, attachment.name);
@@ -125,9 +133,11 @@ function UserAttachment({ attachment }: { attachment: Attachment }) {
   // Until the presign lands there's no URL to play; fall through to the chip,
   // same as an image does.
   if (media && url) {
+    const transcript = media === "audio" ? getBackendAttachment(attachment.id)?.transcript : undefined;
     return (
       <AttachmentPrimitive.Root className="flex flex-col gap-1.5">
         <MediaAttachment url={url} filename={attachment.name} kind={media} />
+        {transcript && <VoiceNoteTranscript text={transcript} />}
       </AttachmentPrimitive.Root>
     );
   }

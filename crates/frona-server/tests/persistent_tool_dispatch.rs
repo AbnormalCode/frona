@@ -193,6 +193,7 @@ impl AgentTool for Probe {
                         media_type: "image/png".into(),
                     }])
                     .with_attachment(frona::storage::Attachment {
+                        transcript: None,
                         filename: "a.png".into(),
                         content_type: "image/png".into(),
                         size_bytes: 3,

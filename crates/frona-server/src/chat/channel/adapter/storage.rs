@@ -15,6 +15,7 @@ pub(crate) fn write_attachment_bytes(
     let rel_path = format!("inbox/{safe_name}");
     workspace.write_bytes(&rel_path, bytes)?;
     Ok(Attachment {
+        transcript: None,
         filename: safe_name,
         content_type: content_type.to_string(),
         size_bytes: bytes.len() as u64,

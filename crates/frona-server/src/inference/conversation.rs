@@ -751,7 +751,37 @@ pub fn format_files_block_simple(content: &str, attachments: &[Attachment]) -> S
         return content.to_string();
     }
     let paths: Vec<&str> = attachments.iter().map(|a| a.path.as_str()).collect();
-    format!("{content}\n<files>\n{}\n</files>", paths.join("\n"))
+    let mut text = format!("{content}\n<files>\n{}\n</files>", paths.join("\n"));
+    for note in attachments.iter().filter_map(voice_note_block) {
+        text.push('\n');
+        text.push_str(&note);
+    }
+    text
+}
+
+/// What a transcribed voice note said, in the form the model reads it. The
+/// recording itself stays listed under `<files>`, so the agent can still reach
+/// the audio if the transcript isn't enough.
+fn voice_note_block(attachment: &Attachment) -> Option<String> {
+    let transcript = attachment.transcript.as_deref()?;
+    let file = attachment.filename.replace('"', "'");
+    Some(format!(
+        "<voice_note file=\"{file}\">\n{transcript}\n</voice_note>"
+    ))
+}
+
+/// `content` followed by what any transcribed voice notes in `attachments` said,
+/// without listing files. For callers that hand an untrusted inbound to a model
+/// as plain text: a voice note is then read the same way a typed message is.
+pub fn with_voice_notes(content: &str, attachments: &[Attachment]) -> String {
+    let mut text = content.to_string();
+    for note in attachments.iter().filter_map(voice_note_block) {
+        if !text.is_empty() {
+            text.push('\n');
+        }
+        text.push_str(&note);
+    }
+    text
 }
 
 pub fn is_embeddable_image(attachment: &Attachment) -> bool {
@@ -901,7 +931,7 @@ pub async fn build_user_message(
         }
     }
 
-    let text = if non_images.is_empty() {
+    let mut text = if non_images.is_empty() {
         content.to_string()
     } else {
         let mut paths = Vec::with_capacity(non_images.len());
@@ -910,6 +940,10 @@ pub async fn build_user_message(
         }
         format!("{content}\n<files>\n{}\n</files>", paths.join("\n"))
     };
+    for note in non_images.iter().filter_map(|att| voice_note_block(att)) {
+        text.push('\n');
+        text.push_str(&note);
+    }
 
     if images.is_empty() {
         return RigMessage::user(&text);
@@ -1033,6 +1067,7 @@ mod tests {
     #[test]
     fn format_files_block_simple_with_attachments() {
         let attachments = vec![Attachment {
+            transcript: None,
             filename: "report.pdf".to_string(),
             content_type: "application/pdf".to_string(),
             size_bytes: 1024,
@@ -1050,6 +1085,7 @@ mod tests {
     #[test]
     fn is_embeddable_image_png() {
         let att = Attachment {
+            transcript: None,
             filename: "logo.png".into(),
             content_type: "image/png".into(),
             size_bytes: 100,
@@ -1063,6 +1099,7 @@ mod tests {
     #[test]
     fn is_embeddable_image_svg_excluded() {
         let att = Attachment {
+            transcript: None,
             filename: "icon.svg".into(),
             content_type: "image/svg+xml".into(),
             size_bytes: 100,
@@ -1076,6 +1113,7 @@ mod tests {
     #[test]
     fn is_embeddable_image_pdf_excluded() {
         let att = Attachment {
+            transcript: None,
             filename: "doc.pdf".into(),
             content_type: "application/pdf".into(),
             size_bytes: 100,
@@ -1114,6 +1152,7 @@ mod tests {
                 schema: None,
             }),
             attachments: vec![Attachment {
+                transcript: None,
                 filename: "output.csv".to_string(),
                 content_type: "text/csv".to_string(),
                 size_bytes: 512,

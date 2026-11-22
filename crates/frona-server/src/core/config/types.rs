@@ -670,6 +670,18 @@ pub struct VoiceConfig {
         description = "Server-level default greeting spoken when an inbound call connects, used when the owning user has not set their own via /api/voice/inbound-settings."
     )]
     pub inbound_welcome_greeting: Option<String>,
+    #[schemars(
+        description = "Provider (a key under `providers`) that transcribes voice notes sent in chat or over channels. It must serve the OpenAI-compatible /audio/transcriptions endpoint: openai, groq, or a `generic` entry pointing at a local Whisper server. Unset picks openai, then groq, if either is configured; \"none\" turns transcription off."
+    )]
+    pub transcription_provider: Option<String>,
+    #[schemars(
+        description = "Transcription model. Defaults to gpt-4o-mini-transcribe on OpenAI, whisper-large-v3-turbo on Groq, and whisper-1 elsewhere."
+    )]
+    pub transcription_model: Option<String>,
+    #[schemars(
+        description = "ISO-639-1 language of the voice notes (e.g. en). Unset lets the model detect it per recording."
+    )]
+    pub transcription_language: Option<String>,
 }
 
 #[derive(Clone, Debug, Default, Deserialize, Serialize, JsonSchema)]

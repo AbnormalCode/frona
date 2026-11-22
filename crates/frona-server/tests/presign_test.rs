@@ -57,6 +57,7 @@ async fn create_user(db: &Surreal<Db>, id: &str, handle: &str) {
 
 fn make_attachment(owner: &str, path: &str) -> Attachment {
     Attachment {
+        transcript: None,
         filename: "photo.png".to_string(),
         content_type: "image/png".to_string(),
         size_bytes: 1024,

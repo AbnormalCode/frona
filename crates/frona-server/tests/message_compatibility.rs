@@ -38,6 +38,7 @@ fn populated_message() -> Message {
         "Remember my preference".into(),
     )
     .attachments(vec![Attachment {
+        transcript: None,
         filename: "notes.txt".into(),
         content_type: "text/plain".into(),
         size_bytes: 12,

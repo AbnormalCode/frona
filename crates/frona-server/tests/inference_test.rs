@@ -1419,6 +1419,7 @@ async fn test_tool_loop_deduplicates_attachments_before_lifecycle_return() {
     init_metrics();
 
     let attachment = frona::storage::Attachment {
+        transcript: None,
         filename: "report.md".to_string(),
         content_type: "text/markdown".to_string(),
         size_bytes: 1234,

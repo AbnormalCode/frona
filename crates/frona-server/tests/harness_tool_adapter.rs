@@ -38,6 +38,7 @@ async fn runtime_adapter_requires_explicit_context_and_preserves_output_for_mapp
                 }],
             )
             .with_attachment(frona::storage::Attachment {
+                transcript: None,
                 filename: "result.png".into(),
                 content_type: "image/png".into(),
                 size_bytes: 2,
