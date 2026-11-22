@@ -107,6 +107,7 @@ impl ChatSessionContext {
                     t.status,
                     crate::agent::task::models::TaskStatus::Pending
                         | crate::agent::task::models::TaskStatus::InProgress
+                        | crate::agent::task::models::TaskStatus::WaitingApproval
                 )
         });
         let task_ctx = if task_in_progress {

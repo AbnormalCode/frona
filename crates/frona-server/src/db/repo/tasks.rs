@@ -14,7 +14,7 @@ const SELECT_CLAUSE: &str = "SELECT *, meta::id(id) as id";
 impl TaskRepository for SurrealRepo<Task> {
     async fn find_active_by_user_id(&self, user_id: &str) -> Result<Vec<Task>, AppError> {
         let query = format!(
-            "{SELECT_CLAUSE} FROM task WHERE user_id = $user_id AND (status.Pending IS NOT NONE OR status.InProgress IS NOT NONE) ORDER BY created_at DESC"
+            "{SELECT_CLAUSE} FROM task WHERE user_id = $user_id AND (status.Pending IS NOT NONE OR status.InProgress IS NOT NONE OR status.WaitingApproval IS NOT NONE) ORDER BY created_at DESC"
         );
         let mut result = self
             .db()
@@ -49,7 +49,7 @@ impl TaskRepository for SurrealRepo<Task> {
 
     async fn find_resumable(&self, now: DateTime<Utc>) -> Result<Vec<Task>, AppError> {
         let query = format!(
-            "{SELECT_CLAUSE} FROM task WHERE (status.Pending IS NOT NONE OR status.InProgress IS NOT NONE) AND kind.Cron IS NONE AND (run_at IS NONE OR run_at <= $now) ORDER BY created_at ASC"
+            "{SELECT_CLAUSE} FROM task WHERE (status.Pending IS NOT NONE OR status.InProgress IS NOT NONE OR status.WaitingApproval IS NOT NONE) AND kind.Cron IS NONE AND (run_at IS NONE OR run_at <= $now) ORDER BY created_at ASC"
         );
         let mut result = self
             .db()
@@ -142,7 +142,7 @@ impl TaskRepository for SurrealRepo<Task> {
     async fn find_active_runs_by_cron(&self, cron_id: &str) -> Result<Vec<Task>, AppError> {
         let query = format!(
             "{SELECT_CLAUSE} FROM task WHERE kind.CronRun.source_cron_id = $cron_id \
-             AND (status.Pending IS NOT NONE OR status.InProgress IS NOT NONE) \
+             AND (status.Pending IS NOT NONE OR status.InProgress IS NOT NONE OR status.WaitingApproval IS NOT NONE) \
              ORDER BY kind.CronRun.sequence_num ASC"
         );
         let mut result = self

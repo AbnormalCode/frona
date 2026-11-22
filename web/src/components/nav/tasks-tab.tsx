@@ -7,6 +7,7 @@ import { TaskItem } from "./task-item";
 function taskSortKey(task: TaskResponse): { rank: number; time: number } {
   switch (task.status) {
     case "inprogress": return { rank: 0, time: 0 };
+    case "waitingapproval": return { rank: 0, time: 0 };
     case "failed": return { rank: 1, time: 0 };
     case "pending": {
       const date = task.kind.type === "Cron" ? task.kind.next_run_at : task.run_at;

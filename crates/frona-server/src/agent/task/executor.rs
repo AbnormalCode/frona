@@ -454,6 +454,29 @@ impl TaskExecutor {
         self.execute_task(task, cancel_token).await
     }
 
+    /// A task paused on a human request: flag it as waiting, tell the user
+    /// (push with answer buttons), and leave a note in the delegating chat.
+    /// Best effort; the pause itself has already been persisted.
+    async fn waiting_for_approval(
+        &self,
+        task: &Task,
+        chat_id: &str,
+        agent_id: Option<&str>,
+        tool_calls: &[crate::inference::tool_call::ToolCallResponse],
+    ) {
+        if let Err(e) = self
+            .harness
+            .task_service
+            .mark_waiting_approval(&task.id)
+            .await
+        {
+            tracing::warn!(task_id = %task.id, error = %e, "Could not mark task as waiting for approval");
+        }
+        self.harness
+            .surface_pending_hitls(&task.user_id, chat_id, agent_id, tool_calls)
+            .await;
+    }
+
     pub async fn cancel_task(&self, task_id: &str) -> bool {
         let Ok(Some(task)) = self.harness.task_service.find_by_id(task_id).await else {
             return false;
@@ -686,14 +709,29 @@ impl TaskExecutor {
                     }
                     InferenceResponse::ExternalToolPending { tool_calls, .. } => {
                         if response.status != Some(MessageStatus::Paused) {
+                            let agent_id = response.agent_id.clone();
                             self.harness
                                 .chat_service
                                 .pause_agent_message(
                                     response,
                                     crate::inference::tool_loop::PauseReason::Hitl,
-                                    tool_calls,
+                                    tool_calls.clone(),
                                 )
                                 .await?;
+                            self.waiting_for_approval(
+                                &task,
+                                &chat_id,
+                                agent_id.as_deref(),
+                                &tool_calls,
+                            )
+                            .await;
+                        } else {
+                            // Resumed after a restart while still waiting.
+                            let _ = self
+                                .harness
+                                .task_service
+                                .mark_waiting_approval(&task.id)
+                                .await;
                         }
                         // Exit cleanly. The HITL-resolve handler will respawn
                         // this task via `run_task` once the human resolves.
@@ -1047,14 +1085,23 @@ impl TaskExecutor {
                 }
                 InferenceResponse::ExternalToolPending { tool_calls, .. } => {
                     if response.status != Some(MessageStatus::Paused) {
+                        let agent_id = response.agent_id.clone();
                         self.harness
                             .chat_service
                             .pause_agent_message(
                                 response,
                                 crate::inference::tool_loop::PauseReason::Hitl,
-                                tool_calls,
+                                tool_calls.clone(),
                             )
                             .await?;
+                        self.waiting_for_approval(task, &chat_id, agent_id.as_deref(), &tool_calls)
+                            .await;
+                    } else {
+                        let _ = self
+                            .harness
+                            .task_service
+                            .mark_waiting_approval(&task.id)
+                            .await;
                     }
                     return Ok(());
                 }
@@ -1260,7 +1307,7 @@ impl TaskExecutor {
         if !all_done {
             tracing::debug!(
                 source_chat_id = %source_chat_id,
-                remaining = siblings.iter().filter(|t| matches!(t.status, TaskStatus::Pending | TaskStatus::InProgress)).count(),
+                remaining = siblings.iter().filter(|t| matches!(t.status, TaskStatus::Pending | TaskStatus::InProgress | TaskStatus::WaitingApproval)).count(),
                 "Not all sibling tasks done yet"
             );
             return;

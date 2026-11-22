@@ -8,6 +8,7 @@ import type { TaskResponse } from "@/lib/types";
 const statusStyles: Record<string, string> = {
   pending: "bg-warning-bg text-warning-text",
   inprogress: "bg-info-bg text-info-text",
+  waitingapproval: "bg-warning-bg text-warning-text",
   completed: "bg-success-bg text-success-text",
   failed: "bg-danger-bg text-danger-text",
   cancelled: "bg-surface-tertiary text-text-secondary",
@@ -16,6 +17,7 @@ const statusStyles: Record<string, string> = {
 const statusLabels: Record<string, string> = {
   pending: "Pending",
   inprogress: "Running",
+  waitingapproval: "Waiting for approval",
   completed: "Done",
   failed: "Failed",
   cancelled: "Cancelled",
@@ -110,7 +112,7 @@ function formatTime(iso: string | null | undefined): string {
 function durationMs(run: TaskResponse): string {
   if (run.kind.type !== "CronRun") return "—";
   const start = new Date(run.kind.fire_at).getTime();
-  const endIso = run.status === "pending" || run.status === "inprogress" ? null : run.updated_at;
+  const endIso = run.status === "pending" || run.status === "inprogress" || run.status === "waitingapproval" ? null : run.updated_at;
   if (!endIso) return "—";
   const end = new Date(endIso).getTime();
   const ms = Math.max(0, end - start);

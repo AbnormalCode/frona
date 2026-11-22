@@ -29,6 +29,7 @@ fn status_str(status: &TaskStatus) -> &'static str {
     match status {
         TaskStatus::Pending => "pending",
         TaskStatus::InProgress => "inprogress",
+        TaskStatus::WaitingApproval => "waitingapproval",
         TaskStatus::Completed => "completed",
         TaskStatus::Failed => "failed",
         TaskStatus::Cancelled => "cancelled",
@@ -272,6 +273,26 @@ impl TaskService {
 
         let task = self.repo.update(&task).await?;
         self.broadcast(&task, "inprogress", None);
+        Ok(task)
+    }
+
+    /// Flag a task that is paused on a human request. A no-op for tasks that
+    /// already finished or were cancelled, so a late pause can't resurrect one.
+    pub async fn mark_waiting_approval(&self, task_id: &str) -> Result<Task, AppError> {
+        let mut task = self
+            .repo
+            .find_by_id(task_id)
+            .await?
+            .ok_or_else(|| AppError::NotFound("Task not found".into()))?;
+
+        if !matches!(task.status, TaskStatus::Pending | TaskStatus::InProgress) {
+            return Ok(task);
+        }
+        task.status = TaskStatus::WaitingApproval;
+        task.updated_at = chrono::Utc::now();
+
+        let task = self.repo.update(&task).await?;
+        self.broadcast(&task, "waitingapproval", None);
         Ok(task)
     }
 

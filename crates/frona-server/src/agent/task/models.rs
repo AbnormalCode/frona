@@ -9,6 +9,9 @@ use surrealdb::types::SurrealValue;
 pub enum TaskStatus {
     Pending,
     InProgress,
+    /// Paused on a human-in-the-loop request (approval, credential, question).
+    /// Still active: the task resumes once the human answers.
+    WaitingApproval,
     Completed,
     Failed,
     Cancelled,

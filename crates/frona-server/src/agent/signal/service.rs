@@ -224,7 +224,10 @@ impl SignalService {
             self.unregister(&watch.user_id, &watch.task_id).await;
             return Ok(false);
         };
-        if !matches!(task.status, TaskStatus::Pending | TaskStatus::InProgress) {
+        if !matches!(
+            task.status,
+            TaskStatus::Pending | TaskStatus::InProgress | TaskStatus::WaitingApproval
+        ) {
             self.unregister(&watch.user_id, &watch.task_id).await;
             return Ok(false);
         }

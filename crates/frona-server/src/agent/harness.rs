@@ -886,7 +886,7 @@ impl Harness {
     ///      dead-end while the delegate silently waits.
     ///
     /// Best-effort throughout: failures here must never break the pause path.
-    async fn surface_pending_hitls(
+    pub(crate) async fn surface_pending_hitls(
         &self,
         user_id: &str,
         chat_id: &str,

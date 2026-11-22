@@ -282,3 +282,43 @@ async fn seed_direct_task(db: &Surreal<Db>, user_id: &str) -> Task {
     let repo: SurrealRepo<Task> = SurrealRepo::new(db.clone());
     repo.create(&task).await.unwrap()
 }
+
+#[tokio::test]
+async fn mark_waiting_approval_broadcasts_and_keeps_the_task_active() {
+    let (svc, db, mut rx) = setup().await;
+    let task = seed_direct_task(&db, "user-1").await;
+    svc.mark_in_progress(&task.id, Some("chat-1"))
+        .await
+        .unwrap();
+    let _ = drain_events(&mut rx).await;
+
+    let waiting = svc.mark_waiting_approval(&task.id).await.unwrap();
+    assert_eq!(waiting.status, TaskStatus::WaitingApproval);
+    assert_eq!(
+        drain_events(&mut rx).await,
+        1,
+        "mark_waiting_approval must broadcast"
+    );
+
+    let active = svc.list_active("user-1").await.unwrap();
+    assert!(
+        active.iter().any(|t| t.id == task.id),
+        "a task waiting on a human still counts as active"
+    );
+
+    let resumed = svc
+        .mark_in_progress(&task.id, Some("chat-1"))
+        .await
+        .unwrap();
+    assert_eq!(resumed.status, TaskStatus::InProgress);
+}
+
+#[tokio::test]
+async fn mark_waiting_approval_does_not_resurrect_a_finished_task() {
+    let (svc, db, _rx) = setup().await;
+    let task = seed_direct_task(&db, "user-1").await;
+    svc.mark_cancelled(&task.id).await.unwrap();
+
+    let after = svc.mark_waiting_approval(&task.id).await.unwrap();
+    assert_eq!(after.status, TaskStatus::Cancelled);
+}

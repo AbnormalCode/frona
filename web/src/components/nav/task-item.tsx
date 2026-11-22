@@ -13,6 +13,7 @@ import { DeleteConfirmDialog } from "./delete-confirm-dialog";
 const statusColors: Record<string, string> = {
   pending: "bg-warning-bg text-warning-text",
   inprogress: "bg-info-bg text-info-text",
+  waitingapproval: "bg-warning-bg text-warning-text",
   completed: "bg-success-bg text-success-text",
   failed: "bg-danger-bg text-danger-text",
   cancelled: "bg-surface-tertiary text-text-secondary",
@@ -21,13 +22,14 @@ const statusColors: Record<string, string> = {
 const statusLabels: Record<string, string> = {
   pending: "Pending",
   inprogress: "In Progress",
+  waitingapproval: "Waiting for approval",
   completed: "Done",
   failed: "Failed",
   cancelled: "Cancelled",
 };
 
 const terminalStatuses = new Set(["completed", "failed", "cancelled"]);
-const activeStatuses = new Set(["pending", "inprogress"]);
+const activeStatuses = new Set(["pending", "inprogress", "waitingapproval"]);
 
 interface TaskItemProps {
   task: TaskResponse;
