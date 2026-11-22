@@ -155,13 +155,31 @@ async fn twilio_callback(State(state): State<AppState>, Query(q): Query<TokenQue
         }
     };
 
+    // The WS handler gates silence-filling on whether the remote party is one
+    // of our users. On an outbound call the remote party is the contact we're
+    // dialling, so surface its phone number. `caller_name` stays unset except
+    // for a transfer callback: it drives the inbound-greeting-style prefix,
+    // which a plain outbound call handles through its own
+    // `[CALL_CONNECTED: ...]` tool-result mechanism instead.
+    let remote_contact = match ext.contact_id.as_deref() {
+        Some(cid) => state.contact_service.get(&user_id, cid).await.ok(),
+        None => None,
+    };
+    let remote_phone = remote_contact.as_ref().and_then(|c| c.phone.clone());
+    let caller_name = ext
+        .transfer_note
+        .as_ref()
+        .and(remote_contact.as_ref())
+        .map(|c| c.name.clone());
+
     let ws_ext = match serde_json::to_value(VoiceSessionExtensions {
         chat_id: chat_id.clone(),
         contact_id: ext.contact_id.clone(),
         call_id: call_id.clone(),
         direction: None,
-        caller_phone: None,
-        caller_name: None,
+        caller_phone: remote_phone,
+        caller_name,
+        transfer_note: ext.transfer_note.clone(),
     }) {
         Ok(v) => v,
         Err(e) => {

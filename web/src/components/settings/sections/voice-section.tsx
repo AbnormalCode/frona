@@ -131,6 +131,48 @@ export function VoiceSection({ voice, onChange }: VoiceSectionProps) {
             onChange={(inbound_enabled) => onChange({ ...voice, inbound_enabled })}
           />
 
+          <Toggle
+            label="Silence Filling"
+            description="Send periodic filler phrases while the agent is processing, but only when the other party is a registered user (a user calling in, or the agent calling a user). Calls with third parties narrate their own progress and are unaffected."
+            value={voice.silence_fill_enabled}
+            onChange={(silence_fill_enabled) => onChange({ ...voice, silence_fill_enabled })}
+          />
+
+          {voice.silence_fill_enabled && (
+            <>
+              <TextInput
+                label="Initial Silence Delay (seconds)"
+                description="Seconds of silence before the first filler phrase is sent, counted from the last thing the caller heard. Too short and the filler lands in the ordinary pause before the agent starts replying."
+                value={String(voice.silence_fill_initial_delay_secs ?? 5)}
+                onChange={(raw) => {
+                  const n = parseInt(raw, 10);
+                  onChange({ ...voice, silence_fill_initial_delay_secs: isNaN(n) ? 5 : Math.max(1, n) });
+                }}
+                placeholder="5"
+              />
+              <TextInput
+                label="Filler Interval (seconds)"
+                description="Seconds between successive filler phrases"
+                value={String(voice.silence_fill_interval_secs ?? 7)}
+                onChange={(raw) => {
+                  const n = parseInt(raw, 10);
+                  onChange({ ...voice, silence_fill_interval_secs: isNaN(n) ? 7 : Math.max(1, n) });
+                }}
+                placeholder="7"
+              />
+              <TextInput
+                label="Filler Phrases"
+                description="Comma- or newline-separated phrases. Each interval advances to the next phrase in order. Leave empty for defaults."
+                value={voice.silence_fill_phrases?.join(", ") ?? ""}
+                onChange={(raw) => {
+                  const phrases = raw.split(/[,\n]/).map(s => s.trim()).filter(s => s.length > 0);
+                  onChange({ ...voice, silence_fill_phrases: phrases });
+                }}
+                placeholder="Just a moment..., Let me look into that..., One moment please..."
+              />
+            </>
+          )}
+
 
         </>
       )}

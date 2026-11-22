@@ -91,6 +91,10 @@ export interface VoiceConfig {
   twilio_interrupt_sensitivity: string | null;
   inbound_enabled: boolean;
   inbound_welcome_greeting: string | null;
+  silence_fill_enabled: boolean;
+  silence_fill_initial_delay_secs: number;
+  silence_fill_interval_secs: number;
+  silence_fill_phrases: string[];
   transcription_provider: string | null;
   transcription_model: string | null;
   transcription_language: string | null;

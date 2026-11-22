@@ -11,9 +11,10 @@ use twilio_async::{TwilioJson, TwilioRequest};
 
 use crate::agent::models::Agent;
 use crate::agent::service::AgentService;
+use crate::auth::User;
+use crate::auth::UserService;
 use crate::auth::token::models::TokenType;
 use crate::auth::token::service::{CreateTokenRequest, TokenService};
-use crate::auth::{User, UserService};
 use crate::call::CallService;
 use crate::call::models::CallDirection;
 use crate::contact::ContactService;
@@ -25,32 +26,6 @@ use crate::tool::{
     AgentTool, InferenceContext, ToolDefinition, ToolOutput, active_chat, load_tool_definition,
 };
 use frona_text::prompt::PromptLoader;
-
-#[derive(Debug, Serialize, Deserialize)]
-pub struct VoiceCallbackExtensions {
-    pub chat_id: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub welcome_greeting: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub hints: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub contact_id: Option<String>,
-}
-
-#[derive(Debug, Serialize, Deserialize)]
-pub struct VoiceSessionExtensions {
-    pub chat_id: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub contact_id: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub call_id: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub direction: Option<CallDirection>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub caller_phone: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub caller_name: Option<String>,
-}
 
 // ---------------------------------------------------------------------------
 // Phone number helpers
@@ -191,6 +166,49 @@ pub fn validate_twilio_signature(
     expected == header_sig
 }
 
+#[derive(Debug, Serialize, Deserialize)]
+pub struct VoiceCallbackExtensions {
+    pub chat_id: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub welcome_greeting: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub hints: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub contact_id: Option<String>,
+    /// Set only for `transfer_call`'s callback leg — carried through to the
+    /// WS session's own `VoiceSessionExtensions::transfer_note` once this
+    /// outbound call is answered. See `place_outbound_call`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub transfer_note: Option<String>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct VoiceSessionExtensions {
+    pub chat_id: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub contact_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub call_id: Option<String>,
+    /// Present on inbound calls; `None` for outbound.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub direction: Option<CallDirection>,
+    /// Caller's phone number for inbound calls (stored so the WS handler does
+    /// not need an extra DB round-trip to build the `[INBOUND_CALL]` message).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub caller_phone: Option<String>,
+    /// Caller's display name for inbound calls.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub caller_name: Option<String>,
+    /// Set when this leg is `transfer_call`'s callback — a fresh outbound
+    /// call the target agent places to the original caller once the source
+    /// call has actually ended (see `place_outbound_call` and
+    /// `api::routes::voice::websocket`). Seeds the target agent's first turn
+    /// with a `[CALL_TRANSFERRED: ...]` prefix, same mechanism as
+    /// `[INBOUND_CALL: ...]` on a fresh inbound answer.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub transfer_note: Option<String>,
+}
+
 #[async_trait]
 pub trait VoiceProvider: Send + Sync {
     fn name(&self) -> &str;
@@ -205,6 +223,7 @@ pub trait VoiceProvider: Send + Sync {
         welcome_greeting: Option<&str>,
         hints: Option<&str>,
         contact_id: Option<String>,
+        transfer_note: Option<&str>,
     ) -> Result<String, AppError>;
 }
 
@@ -237,12 +256,14 @@ impl VoiceProvider for TwilioProvider {
         welcome_greeting: Option<&str>,
         hints: Option<&str>,
         contact_id: Option<String>,
+        transfer_note: Option<&str>,
     ) -> Result<String, AppError> {
         let extensions = serde_json::to_value(VoiceCallbackExtensions {
             chat_id: chat_id.to_string(),
             welcome_greeting: welcome_greeting.map(str::to_string),
             hints: hints.map(str::to_string),
             contact_id,
+            transfer_note: transfer_note.map(str::to_string),
         })
         .map_err(|e| AppError::Internal(format!("voice callback claims encode: {e}")))?;
 
@@ -288,19 +309,20 @@ impl VoiceProvider for TwilioProvider {
     }
 }
 
+// ---------------------------------------------------------------------------
+// Factory
+// ---------------------------------------------------------------------------
+
 pub fn create_voice_provider(
     config: &VoiceConfig,
     base_url: &str,
     token_service: TokenService,
     keypair_service: KeyPairService,
 ) -> Option<Arc<dyn VoiceProvider>> {
-    let provider = config.provider.as_deref().or_else(|| {
-        if config.twilio_account_sid.is_some() {
-            Some("twilio")
-        } else {
-            None
-        }
-    })?;
+    let provider = config
+        .provider
+        .as_deref()
+        .or_else(|| config.twilio_account_sid.is_some().then_some("twilio"))?;
 
     match provider.to_lowercase().as_str() {
         "twilio" => {
@@ -320,11 +342,65 @@ pub fn create_voice_provider(
             }))
         }
         other => {
-            tracing::warn!(provider = %other, "Unknown voice provider; voice calling disabled");
+            tracing::warn!(
+                provider = %other,
+                "Unsupported voice provider; voice calling disabled. The only provider is \
+                 `twilio` - set voice.provider to that, or remove it to disable voice"
+            );
             None
         }
     }
 }
+
+/// Place an outbound call attached to `chat_id`, as `agent_id`: finds or
+/// creates the contact, asks the provider to dial, and records the `Call`
+/// row. Shared by `VoiceCallTool` (an agent-requested call) and the
+/// `transfer_call` callback (`api::routes::voice::websocket`) placing a
+/// fresh call to the original caller once the source call has actually
+/// ended. Returns the resolved contact, so a caller that needs its name
+/// (e.g. for a tool-result prompt block) doesn't have to look it up again.
+#[allow(clippy::too_many_arguments)]
+pub async fn place_outbound_call(
+    provider: &dyn VoiceProvider,
+    contact_service: &ContactService,
+    call_service: &CallService,
+    chat_id: &str,
+    user: &User,
+    agent_id: &str,
+    phone_number: &str,
+    name: &str,
+    welcome_greeting: Option<&str>,
+    hints: Option<&str>,
+    transfer_note: Option<&str>,
+) -> Result<crate::contact::models::ContactResponse, AppError> {
+    let contact = contact_service
+        .find_or_create_by_phone(&user.id, phone_number, name)
+        .await?;
+
+    let sid = provider
+        .initiate_call(
+            phone_number,
+            chat_id,
+            user,
+            agent_id,
+            welcome_greeting,
+            hints,
+            Some(contact.id.clone()),
+            transfer_note,
+        )
+        .await?;
+    tracing::info!(sid = %sid, to = %phone_number, chat_id = %chat_id, "Voice call initiated");
+
+    call_service
+        .create(chat_id, &contact.id, &sid, CallDirection::Outbound)
+        .await?;
+
+    Ok(contact)
+}
+
+// ---------------------------------------------------------------------------
+// VoiceCallTool (external — pauses loop until Twilio callback)
+// ---------------------------------------------------------------------------
 
 pub struct VoiceCallTool {
     pub provider: Option<Arc<dyn VoiceProvider>>,
@@ -377,30 +453,21 @@ impl AgentTool for VoiceCallTool {
 
         let chat = active_chat(ctx)?;
         let chat_id = &chat.id;
-        let user_id = &ctx.user.id;
 
-        let contact = self
-            .contact_service
-            .find_or_create_by_phone(user_id, phone_number, name)
-            .await?;
-
-        let sid = provider
-            .initiate_call(
-                phone_number,
-                chat_id,
-                &ctx.user,
-                &ctx.agent.id,
-                initial_greeting,
-                hints,
-                Some(contact.id.clone()),
-            )
-            .await?;
-        tracing::info!(sid = %sid, to = %phone_number, chat_id = %chat_id, "Voice call initiated");
-
-        let _ = self
-            .call_service
-            .create(chat_id, &contact.id, &sid, CallDirection::Outbound)
-            .await?;
+        let contact = place_outbound_call(
+            provider.as_ref(),
+            &self.contact_service,
+            &self.call_service,
+            chat_id,
+            &ctx.user,
+            &ctx.agent.id,
+            phone_number,
+            name,
+            initial_greeting,
+            hints,
+            None,
+        )
+        .await?;
 
         let call_connected_block = self
             .prompts
@@ -475,6 +542,125 @@ impl AgentTool for HangupCallTool {
     }
 }
 
+// ---------------------------------------------------------------------------
+// TransferCallTool (external — pauses tool loop)
+// ---------------------------------------------------------------------------
+
+/// Past this many transfers on one call, further `transfer_call` attempts are
+/// rejected rather than silently retried — a loop guard against agents
+/// bouncing a caller back and forth.
+const MAX_CALL_TRANSFERS: u32 = 5;
+
+pub struct TransferCallTool {
+    pub prompts: PromptLoader,
+    pub agent_service: AgentService,
+    pub call_service: CallService,
+    pub chat_service: crate::chat::service::ChatService,
+}
+
+#[async_trait]
+impl AgentTool for TransferCallTool {
+    fn name(&self) -> &str {
+        "transfer_call"
+    }
+
+    fn definitions(&self) -> Vec<ToolDefinition> {
+        load_tool_definition(&self.prompts, "tools/transfer_call.md")
+            .map(|d| vec![d])
+            .unwrap_or_default()
+    }
+
+    async fn execute(
+        &self,
+        _tool_name: &str,
+        arguments: Value,
+        ctx: &InferenceContext,
+    ) -> Result<ToolOutput, AppError> {
+        let target_query = arguments
+            .get("target_agent")
+            .and_then(|v| v.as_str())
+            .ok_or_else(|| {
+                AppError::Validation("Missing required parameter: target_agent".into())
+            })?;
+        let note = arguments
+            .get("handoff_note")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string();
+
+        let owner_id = &ctx.user.id;
+        let target = resolve_agent_by_query(&self.agent_service, owner_id, target_query)
+            .await
+            .ok_or_else(|| AppError::Validation(format!("Agent '{target_query}' not found")))?;
+
+        if target.id == ctx.agent.id {
+            return Err(AppError::Validation(
+                "The caller is already speaking with that agent".into(),
+            ));
+        }
+        if !target.enabled {
+            return Err(AppError::Validation(format!(
+                "Agent '{}' is disabled",
+                target.name
+            )));
+        }
+        // The id branch of resolve_agent_by_query isn't owner-scoped (see its
+        // doc comment) — this is what actually enforces that the target is
+        // one the caller's agent is allowed to hand off to.
+        self.agent_service
+            .get_accessible(owner_id, &target.id)
+            .await?;
+
+        // `ctx.chat` is optional since detached inference; a transfer only
+        // makes sense on a live call, so require the chat here.
+        let chat = active_chat(ctx)?;
+        let call = self
+            .call_service
+            .find_by_chat_id(&chat.id)
+            .await?
+            .ok_or_else(|| AppError::Validation("No active call on this chat".into()))?;
+        if call.transfer_count >= MAX_CALL_TRANSFERS {
+            return Err(AppError::Validation(
+                "This call has already been transferred too many times".into(),
+            ));
+        }
+        self.call_service.increment_transfer_count(&call.id).await?;
+
+        // Reassign now, not once the callback connects: the transcript
+        // marker and the chat's owning agent should reflect the transfer
+        // immediately, independent of whether the callback ever succeeds.
+        let updated_chat = self
+            .chat_service
+            .reassign_agent(owner_id, &chat.id, &target.id)
+            .await?;
+        let _ = self
+            .chat_service
+            .save_system_message(
+                owner_id,
+                updated_chat.space_id.as_deref(),
+                &chat.id,
+                format!("Transferred to {}.", target.name),
+            )
+            .await;
+
+        // Read by the voice websocket handler: it ends the current call
+        // exactly like hangup_call, then places a fresh outbound call to the
+        // same caller as the target agent — see
+        // api::routes::voice::websocket::place_transfer_callback. No DB
+        // round-trip or Twilio-relayed data needed for that hand-off; it's
+        // all in-process from here.
+        let payload = serde_json::json!({
+            "target_agent_id": target.id,
+            "note": note,
+        });
+        Ok(ToolOutput::text(payload.to_string()).as_pending_external())
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Tests
+// ---------------------------------------------------------------------------
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -497,6 +683,15 @@ mod tests {
         let config = VoiceConfig::default();
         assert!(config.twilio_account_sid.is_none());
         assert!(config.provider.is_none());
+    }
+
+    #[test]
+    fn looks_like_agent_id_only_matches_uuids() {
+        // Real ids are UUIDs; handles/names must not trigger the id lookup.
+        assert!(looks_like_agent_id(&uuid::Uuid::new_v4().to_string()));
+        assert!(!looks_like_agent_id("receptionist"));
+        assert!(!looks_like_agent_id("my-agent_2"));
+        assert!(!looks_like_agent_id(""));
     }
 
     #[test]

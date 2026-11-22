@@ -36,6 +36,10 @@ pub struct Call {
     pub started_at: DateTime<Utc>,
     pub answered_at: Option<DateTime<Utc>>,
     pub ended_at: Option<DateTime<Utc>>,
+    /// Number of agent-to-agent transfers this call has gone through.
+    /// Capped by `TransferCallTool` to stop a runaway transfer loop.
+    #[serde(default)]
+    pub transfer_count: u32,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
 }

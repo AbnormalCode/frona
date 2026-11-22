@@ -437,6 +437,25 @@ impl ChatService {
         Ok(chat.into())
     }
 
+    pub fn storage_service(&self) -> &StorageService {
+        &self.storage_service
+    }
+
+    pub async fn reassign_agent(
+        &self,
+        user_id: &str,
+        chat_id: &str,
+        new_agent_id: &str,
+    ) -> Result<ChatResponse, AppError> {
+        let mut chat = self.get_chat(user_id, chat_id).await?;
+        chat.agent_id = new_agent_id.to_string();
+        chat.updated_at = chrono::Utc::now();
+
+        let chat = self.chat_repo.update(&chat).await?;
+        self.broadcast_chat_entity(&chat, crate::chat::broadcast::EntityAction::Updated);
+        Ok(chat.into())
+    }
+
     pub async fn upsert_channel_chat(
         &self,
         user_id: &str,

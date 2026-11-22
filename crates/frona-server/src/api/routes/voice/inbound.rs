@@ -368,6 +368,7 @@ pub(super) async fn twilio_inbound_handler(
         // Prefer the resolved display name (allowlist or matched user) over the
         // contact's stored name, which may be "Incoming caller" from a prior call.
         caller_name: Some(caller_display_name.unwrap_or_else(|| contact.name.clone())),
+        transfer_note: None,
     }) {
         Ok(v) => v,
         Err(e) => {

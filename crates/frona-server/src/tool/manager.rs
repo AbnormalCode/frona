@@ -524,6 +524,12 @@ fn create_builtin_tools(state: &AppState) -> Vec<Arc<dyn AgentTool>> {
         tools.push(Arc::new(super::voice::HangupCallTool {
             prompts: prompts.clone(),
         }));
+        tools.push(Arc::new(super::voice::TransferCallTool {
+            prompts: prompts.clone(),
+            agent_service: state.agent_service.clone(),
+            call_service: state.call_service.clone(),
+            chat_service: state.chat_service.clone(),
+        }));
     }
 
     for tool_config in state.cli_tools_config.iter() {
