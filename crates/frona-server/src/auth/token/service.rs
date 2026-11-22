@@ -2,7 +2,9 @@ use std::sync::Arc;
 
 use chrono::{DateTime, Duration, Utc};
 
-use super::models::{ApiToken, CreatePatRequest, PatListItem, PatResponse, TokenType};
+use super::models::{
+    AGENT_TRIGGER_SCOPE, ApiToken, CreatePatRequest, PatListItem, PatResponse, TokenType,
+};
 use super::repository::TokenRepository;
 use crate::auth::User;
 use crate::auth::jwt::JwtService;
@@ -268,8 +270,34 @@ impl TokenService {
     }
 
     /// Ordinary API and app bearer credentials. Principal and scope checks remain
-    /// the caller's responsibility after authentication.
+    /// the caller's responsibility after authentication. A trigger-only token
+    /// (see [`AGENT_TRIGGER_SCOPE`]) is refused here, so every extractor and
+    /// handler that authenticates through this method shuts it out.
     pub async fn validate_api(
+        &self,
+        keypair_svc: &KeyPairService,
+        token_str: &str,
+    ) -> Result<Claims, AppError> {
+        let claims = self
+            .validate_types(
+                keypair_svc,
+                token_str,
+                &[TokenType::Access, TokenType::Pat, TokenType::Ephemeral],
+            )
+            .await?;
+        if is_trigger_only(&claims) {
+            return Err(AppError::Auth {
+                message: "This token can only trigger an agent".into(),
+                code: AuthErrorCode::TokenInvalid,
+            });
+        }
+        Ok(claims)
+    }
+
+    /// Verify a token presented to `POST /api/agents/{id}/trigger`. Accepts
+    /// the trigger-only tokens [`Self::validate_api`] refuses, as well as
+    /// ordinary user tokens; the route decides what each may do.
+    pub async fn validate_agent_trigger(
         &self,
         keypair_svc: &KeyPairService,
         token_str: &str,
@@ -394,6 +422,40 @@ impl TokenService {
             .collect())
     }
 
+    /// The user's trigger tokens for one agent, newest first. Revoked tokens
+    /// are deleted, so everything listed still works until it expires.
+    pub async fn list_agent_trigger_tokens(
+        &self,
+        user_id: &str,
+        agent_id: &str,
+    ) -> Result<Vec<PatListItem>, AppError> {
+        let mut tokens: Vec<ApiToken> = self
+            .repo
+            .find_by_user_id(user_id)
+            .await?
+            .into_iter()
+            .filter(|t| {
+                t.token_type == TokenType::Pat
+                    && t.principal.kind == crate::core::principal::PrincipalKind::Agent
+                    && t.principal.id == agent_id
+                    && t.scopes.iter().any(|s| s == AGENT_TRIGGER_SCOPE)
+            })
+            .collect();
+        tokens.sort_by_key(|t| std::cmp::Reverse(t.created_at));
+        Ok(tokens
+            .into_iter()
+            .map(|t| PatListItem {
+                id: t.id,
+                name: t.name,
+                prefix: t.prefix,
+                scopes: t.scopes,
+                expires_at: t.expires_at,
+                last_used_at: t.last_used_at,
+                created_at: t.created_at,
+            })
+            .collect())
+    }
+
     pub async fn delete_pat(&self, user_id: &str, token_id: &str) -> Result<(), AppError> {
         let token = self
             .repo
@@ -422,6 +484,13 @@ impl TokenService {
     pub fn repo(&self) -> &dyn TokenRepository {
         &*self.repo
     }
+}
+
+pub fn is_trigger_only(claims: &Claims) -> bool {
+    claims
+        .scopes
+        .as_ref()
+        .is_some_and(|scopes| scopes.iter().any(|s| s == AGENT_TRIGGER_SCOPE))
 }
 
 fn token_prefix(jwt: &str) -> String {

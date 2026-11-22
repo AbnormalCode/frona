@@ -146,7 +146,7 @@ impl FromRequestParts<AppState> for AuthUser {
     }
 }
 
-fn extract_token(parts: &Parts) -> Result<&str, ApiError> {
+pub(crate) fn extract_token(parts: &Parts) -> Result<&str, ApiError> {
     if let Some(header) = parts
         .headers
         .get("authorization")

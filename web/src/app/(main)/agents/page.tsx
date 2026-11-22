@@ -88,6 +88,7 @@ import type { SkillBrowserHandle } from "@/components/skills/skill-browser";
 import { SandboxSection } from "@/components/agents/configure/sandbox-section";
 import { CredsSection } from "@/components/agents/configure/creds-section";
 import { ShareSection } from "@/components/agents/configure/share-section";
+import { TriggersSection } from "@/components/agents/configure/triggers-section";
 
 const SECTIONS = [
   { id: "profile", label: "Profile" },
@@ -98,12 +99,13 @@ const SECTIONS = [
   { id: "sandbox", label: "Sandbox" },
   { id: "creds", label: "Credentials" },
   { id: "share", label: "Share" },
+  { id: "triggers", label: "Triggers" },
 ] as const;
 
 type SectionId = (typeof SECTIONS)[number]["id"];
 
 /** Sections only the agent's owner sees. */
-const OWNER_ONLY: readonly SectionId[] = ["share"];
+const OWNER_ONLY: readonly SectionId[] = ["share", "triggers"];
 
 function AgentSettings() {
   const searchParams = useSearchParams();
@@ -304,10 +306,11 @@ function AgentSettings() {
             )}
             {activeSection === "creds" && <CredsSection principalKind="agent" principalId={agentId} />}
             {activeSection === "share" && <ShareSection agentId={agentId} />}
+            {activeSection === "triggers" && !isShared && <TriggersSection agentId={agentId} />}
           </div>
 
           {/* Save bar */}
-          {activeSection !== "creds" && activeSection !== "share" && !isShared && (
+          {activeSection !== "creds" && activeSection !== "share" && activeSection !== "triggers" && !isShared && (
             <div className="pt-4 pb-2 border-t border-border flex items-center justify-end gap-2">
               <button
                 onClick={handleDiscard}

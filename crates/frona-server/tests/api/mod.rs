@@ -24,6 +24,7 @@ mod spaces;
 mod system;
 mod tasks;
 mod token_types;
+mod triggers;
 mod vaults;
 
 use std::net::SocketAddr;
@@ -230,6 +231,7 @@ fn build_app(state: AppState) -> Router {
         .merge(routes::config::router())
         .merge(routes::notifications::router())
         .merge(routes::push::router())
+        .merge(routes::triggers::router())
         .merge(routes::apps::router())
         .merge(routes::mcp::router())
         .merge(routes::system::router())
