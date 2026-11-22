@@ -1762,3 +1762,101 @@ async fn change_password_clears_an_existing_lockout() {
     let resp = attempt_login(&state, "lockedout@example.com", "newpassword456", 7).await;
     assert_eq!(resp.status(), StatusCode::OK, "lockout should be cleared");
 }
+
+async fn put_profile(
+    state: &AppState,
+    token: &str,
+    body: serde_json::Value,
+) -> axum::http::Response<Body> {
+    build_app(state.clone())
+        .oneshot(auth_put_json("/api/auth/profile", token, body))
+        .await
+        .unwrap()
+}
+
+#[tokio::test]
+async fn profile_update_changes_the_display_name_and_normalizes_the_email() {
+    let (state, _tmp) = test_app_state().await;
+    let (token, _) =
+        register_user(&state, "profileuser", "profile@example.com", "password123").await;
+
+    let response = put_profile(
+        &state,
+        &token,
+        serde_json::json!({ "name": "  New Name  ", "email": "  New.Address@Example.COM " }),
+    )
+    .await;
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = body_json(response).await;
+    assert_eq!(body["name"], "New Name");
+    assert_eq!(body["email"], "new.address@example.com");
+}
+
+#[tokio::test]
+async fn profile_update_leaves_name_and_email_alone_when_blank_or_absent() {
+    let (state, _tmp) = test_app_state().await;
+    let (token, _) =
+        register_user(&state, "blankprofile", "blank@example.com", "password123").await;
+    let before = body_json(
+        build_app(state.clone())
+            .oneshot(auth_get("/api/auth/me", &token))
+            .await
+            .unwrap(),
+    )
+    .await;
+
+    let response = put_profile(
+        &state,
+        &token,
+        serde_json::json!({ "name": "   ", "email": "" }),
+    )
+    .await;
+    assert_eq!(response.status(), StatusCode::OK);
+    let after = body_json(response).await;
+    assert_eq!(after["name"], before["name"]);
+    assert_eq!(after["email"], before["email"]);
+
+    let response = put_profile(&state, &token, serde_json::json!({ "timezone": "UTC" })).await;
+    assert_eq!(response.status(), StatusCode::OK);
+    assert_eq!(body_json(response).await["email"], before["email"]);
+}
+
+#[tokio::test]
+async fn profile_update_rejects_a_malformed_email() {
+    let (state, _tmp) = test_app_state().await;
+    let (token, _) = register_user(&state, "badmail", "badmail@example.com", "password123").await;
+    for bad in ["not-an-email", "a@b", "a b@example.com"] {
+        let response = put_profile(&state, &token, serde_json::json!({ "email": bad })).await;
+        assert_eq!(
+            response.status(),
+            StatusCode::BAD_REQUEST,
+            "{bad:?} must be rejected"
+        );
+    }
+}
+
+#[tokio::test]
+async fn profile_update_rejects_an_email_another_account_uses() {
+    let (state, _tmp) = test_app_state().await;
+    register_user(&state, "firstowner", "taken@example.com", "password123").await;
+    let (token, _) =
+        register_user(&state, "secondowner", "second@example.com", "password123").await;
+
+    // Case and padding must not be a way round the uniqueness check.
+    let response = put_profile(
+        &state,
+        &token,
+        serde_json::json!({ "email": " TAKEN@example.com " }),
+    )
+    .await;
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+
+    // Re-saving your own address is not a conflict.
+    let response = put_profile(
+        &state,
+        &token,
+        serde_json::json!({ "email": "second@example.com" }),
+    )
+    .await;
+    assert_eq!(response.status(), StatusCode::OK);
+}

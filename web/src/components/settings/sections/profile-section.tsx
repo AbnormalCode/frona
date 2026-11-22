@@ -19,14 +19,47 @@ interface SystemInfo {
 }
 
 export function ProfileSection() {
-  const { user, revalidate } = useAuth();
+  const { user, revalidate, authConfig, changePassword } = useAuth();
   const { mode, setMode } = useTheme();
   const [timezone, setTimezone] = useState(user?.timezone ?? "");
   const [phone, setPhone] = useState(user?.phone ?? "");
+  const [email, setEmail] = useState(user?.email ?? "");
+  const [name, setName] = useState(user?.name ?? "");
   const [saving, setSaving] = useState(false);
   const [savingPhone, setSavingPhone] = useState(false);
+  const [savingEmail, setSavingEmail] = useState(false);
+  const [savingName, setSavingName] = useState(false);
+  const [profileError, setProfileError] = useState<string | null>(null);
   const [timezones, setTimezones] = useState<string[]>([]);
   const [serverTimezone, setServerTimezone] = useState<string>("");
+  const [currentPassword, setCurrentPassword] = useState("");
+  const [newPassword, setNewPassword] = useState("");
+  const [confirmPassword, setConfirmPassword] = useState("");
+  const [savingPassword, setSavingPassword] = useState(false);
+  const [passwordError, setPasswordError] = useState<string | null>(null);
+  const [passwordDone, setPasswordDone] = useState(false);
+
+  const submitPasswordChange = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setPasswordDone(false);
+    if (newPassword !== confirmPassword) {
+      setPasswordError("New passwords don't match.");
+      return;
+    }
+    setPasswordError(null);
+    setSavingPassword(true);
+    try {
+      await changePassword(currentPassword, newPassword);
+      setCurrentPassword("");
+      setNewPassword("");
+      setConfirmPassword("");
+      setPasswordDone(true);
+    } catch (err) {
+      setPasswordError(err instanceof Error ? err.message : "Failed to change password");
+    } finally {
+      setSavingPassword(false);
+    }
+  };
 
   useEffect(() => {
     api.get<string[]>("/api/system/timezones").then(setTimezones).catch(() => {});
@@ -49,15 +82,31 @@ export function ProfileSection() {
     }
   }, []);
 
+  // Always send the full profile so a partial save can't clobber other fields
+  // (the backend treats a missing Option field as "clear it").
+  const saveProfile = async (patch: {
+    timezone?: string | null;
+    phone?: string | null;
+    email?: string;
+    name?: string;
+  }) => {
+    setProfileError(null);
+    await api.put("/api/auth/profile", {
+      timezone: timezone || null,
+      phone: phone || null,
+      email,
+      name,
+      ...patch,
+    });
+    await revalidate();
+  };
+
   const saveTimezone = async (tz: string) => {
     setTimezone(tz);
     if (!timezones.includes(tz)) return;
     setSaving(true);
     try {
-      // Always send the full profile: the backend treats a missing field as
-      // "clear it", so a partial save would wipe the other one.
-      await api.put("/api/auth/profile", { timezone: tz || null, phone: phone || null });
-      await revalidate();
+      await saveProfile({ timezone: tz || null });
     } finally {
       setSaving(false);
     }
@@ -67,10 +116,45 @@ export function ProfileSection() {
     if (phone === (user?.phone ?? "")) return;
     setSavingPhone(true);
     try {
-      await api.put("/api/auth/profile", { timezone: timezone || null, phone: phone || null });
-      await revalidate();
+      await saveProfile({ phone: phone || null });
     } finally {
       setSavingPhone(false);
+    }
+  };
+
+  const saveEmail = async () => {
+    const trimmed = email.trim();
+    if (trimmed === (user?.email ?? "")) return;
+    if (!trimmed) {
+      setEmail(user?.email ?? "");
+      return;
+    }
+    setSavingEmail(true);
+    try {
+      await saveProfile({ email: trimmed });
+    } catch (e) {
+      setProfileError(e instanceof Error ? e.message : "Failed to update email");
+      setEmail(user?.email ?? "");
+    } finally {
+      setSavingEmail(false);
+    }
+  };
+
+  const saveName = async () => {
+    const trimmed = name.trim();
+    if (trimmed === (user?.name ?? "")) return;
+    if (!trimmed) {
+      setName(user?.name ?? "");
+      return;
+    }
+    setSavingName(true);
+    try {
+      await saveProfile({ name: trimmed });
+    } catch (e) {
+      setProfileError(e instanceof Error ? e.message : "Failed to update name");
+      setName(user?.name ?? "");
+    } finally {
+      setSavingName(false);
     }
   };
 
@@ -80,17 +164,114 @@ export function ProfileSection() {
 
       {user && (
         <SectionPanel title="Account">
-          <div className="space-y-4">
-            <Field label="Name">
-              <p className="text-sm text-text-primary">{user.name}</p>
-            </Field>
-            <Field label="Username">
+          <div className="space-y-3">
+            <div>
+              <label className="block text-xs font-medium text-text-tertiary mb-1">Name</label>
+              <input
+                type="text"
+                value={name}
+                onChange={(e) => setName(e.target.value)}
+                onBlur={saveName}
+                onKeyDown={(e) => { if (e.key === "Enter") e.currentTarget.blur(); }}
+                placeholder="Your name"
+                className="w-full rounded-lg border border-border bg-surface px-3 py-2 text-sm text-text-primary placeholder:text-text-tertiary focus:border-accent focus:outline-none"
+              />
+              {savingName && <p className="text-xs text-text-tertiary mt-1">Saving...</p>}
+            </div>
+            <div>
+              <label className="block text-xs font-medium text-text-tertiary mb-1">Username</label>
               <p className="text-sm text-text-primary">@{user.handle}</p>
-            </Field>
-            <Field label="Email">
-              <p className="text-sm text-text-primary">{user.email}</p>
-            </Field>
+            </div>
+            <div>
+              <label className="block text-xs font-medium text-text-tertiary mb-1">Email</label>
+              <input
+                type="email"
+                value={email}
+                onChange={(e) => setEmail(e.target.value)}
+                onBlur={saveEmail}
+                onKeyDown={(e) => { if (e.key === "Enter") e.currentTarget.blur(); }}
+                placeholder="you@example.com"
+                className="w-full rounded-lg border border-border bg-surface px-3 py-2 text-sm text-text-primary placeholder:text-text-tertiary focus:border-accent focus:outline-none"
+              />
+              {savingEmail && <p className="text-xs text-text-tertiary mt-1">Saving...</p>}
+            </div>
+            {profileError && (
+              <p className="text-xs text-error-text">{profileError}</p>
+            )}
+            <div>
+              <label className="block text-xs font-medium text-text-tertiary mb-1">Phone</label>
+              <input
+                type="tel"
+                value={phone}
+                onChange={(e) => setPhone(e.target.value)}
+                onBlur={savePhone}
+                onKeyDown={(e) => { if (e.key === "Enter") e.currentTarget.blur(); }}
+                placeholder="+44 7xxx xxx xxx"
+                className="w-full rounded-lg border border-border bg-surface px-3 py-2 text-sm text-text-primary placeholder:text-text-tertiary focus:border-accent focus:outline-none"
+              />
+              {savingPhone && (
+                <p className="text-xs text-text-tertiary mt-1">Saving...</p>
+              )}
+            </div>
           </div>
+        </SectionPanel>
+      )}
+
+      {user && !authConfig?.sso.disable_local_auth && (
+        <SectionPanel title="Password">
+          <form onSubmit={submitPasswordChange} className="space-y-3">
+            <div>
+              <label className="block text-xs font-medium text-text-tertiary mb-1">
+                Current password
+              </label>
+              <input
+                type="password"
+                required
+                value={currentPassword}
+                onChange={(e) => setCurrentPassword(e.target.value)}
+                className="w-full rounded-lg border border-border bg-surface px-3 py-2 text-sm text-text-primary focus:border-accent focus:outline-none"
+              />
+            </div>
+            <div>
+              <label className="block text-xs font-medium text-text-tertiary mb-1">
+                New password
+              </label>
+              <input
+                type="password"
+                required
+                minLength={8}
+                value={newPassword}
+                onChange={(e) => setNewPassword(e.target.value)}
+                className="w-full rounded-lg border border-border bg-surface px-3 py-2 text-sm text-text-primary focus:border-accent focus:outline-none"
+              />
+            </div>
+            <div>
+              <label className="block text-xs font-medium text-text-tertiary mb-1">
+                Confirm new password
+              </label>
+              <input
+                type="password"
+                required
+                minLength={8}
+                value={confirmPassword}
+                onChange={(e) => setConfirmPassword(e.target.value)}
+                className="w-full rounded-lg border border-border bg-surface px-3 py-2 text-sm text-text-primary focus:border-accent focus:outline-none"
+              />
+            </div>
+            {passwordError && <p className="text-xs text-error-text">{passwordError}</p>}
+            {passwordDone && (
+              <p className="text-xs text-text-tertiary">
+                Password changed. Your other sessions have been signed out.
+              </p>
+            )}
+            <button
+              type="submit"
+              disabled={savingPassword}
+              className="rounded-lg bg-accent px-3 py-1.5 text-xs font-medium text-surface shadow-sm hover:bg-accent-hover disabled:opacity-50 transition"
+            >
+              {savingPassword ? "Saving…" : "Change password"}
+            </button>
+          </form>
         </SectionPanel>
       )}
 
@@ -124,25 +305,6 @@ export function ProfileSection() {
               )}
               {saving && (
                 <p className="text-xs text-text-tertiary">Saving...</p>
-              )}
-            </div>
-
-            <div>
-              <label className="block text-xs font-medium text-text-tertiary mb-1">Phone</label>
-              <input
-                type="tel"
-                value={phone}
-                onChange={(e) => setPhone(e.target.value)}
-                onBlur={savePhone}
-                onKeyDown={(e) => { if (e.key === "Enter") e.currentTarget.blur(); }}
-                placeholder="+44 7xxx xxx xxx"
-                className="w-full rounded-lg border border-border bg-surface px-3 py-2 text-sm text-text-primary placeholder:text-text-tertiary focus:border-accent focus:outline-none"
-              />
-              <p className="text-xs text-text-tertiary mt-1">
-                Used to recognise you when you phone your agents.
-              </p>
-              {savingPhone && (
-                <p className="text-xs text-text-tertiary mt-1">Saving...</p>
               )}
             </div>
 

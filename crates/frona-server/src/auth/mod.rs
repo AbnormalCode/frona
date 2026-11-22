@@ -258,6 +258,21 @@ impl AuthService {
         Ok(())
     }
 
+    /// A sanity check, not a deliverability one: one `@`, a non-empty local part,
+    /// and a dotted domain with no whitespace anywhere.
+    fn is_valid_email(email: &str) -> bool {
+        let mut parts = email.split('@');
+        let (Some(local), Some(domain), None) = (parts.next(), parts.next(), parts.next()) else {
+            return false;
+        };
+        !local.is_empty()
+            && domain.len() >= 3
+            && domain.contains('.')
+            && !domain.starts_with('.')
+            && !domain.ends_with('.')
+            && !email.chars().any(|c| c.is_whitespace())
+    }
+
     pub fn normalize_email(email: &str) -> String {
         email.trim().to_lowercase()
     }
@@ -408,6 +423,33 @@ impl AuthService {
             )));
         }
 
+        if let Some(new_email) = req
+            .email
+            .as_ref()
+            .map(|e| Self::normalize_email(e))
+            .filter(|e| !e.is_empty())
+            && new_email != Self::normalize_email(&user.email)
+        {
+            if !Self::is_valid_email(&new_email) {
+                return Err(AppError::Validation("Enter a valid email address.".into()));
+            }
+            if let Some(existing) = user_service.find_by_email(&new_email).await?
+                && existing.id != user.id
+            {
+                return Err(AppError::Validation("Email already in use.".into()));
+            }
+            user.email = new_email;
+        }
+
+        if let Some(new_name) = req
+            .name
+            .as_ref()
+            .map(|n| n.trim())
+            .filter(|n| !n.is_empty())
+        {
+            user.name = new_name.to_string();
+        }
+
         user.timezone = req.timezone.filter(|s| !s.is_empty());
         user.phone = req.phone.filter(|s| !s.is_empty());
         user.updated_at = chrono::Utc::now();
@@ -495,5 +537,34 @@ mod tests {
     #[test]
     fn validate_password_rejects_7_chars() {
         assert!(AuthService::validate_password("1234567").is_err());
+    }
+
+    #[test]
+    fn is_valid_email_accepts_ordinary_addresses() {
+        for ok in ["a@b.co", "first.last@example.com", "x+tag@sub.example.org"] {
+            assert!(AuthService::is_valid_email(ok), "{ok} should be valid");
+        }
+    }
+
+    #[test]
+    fn is_valid_email_rejects_malformed_addresses() {
+        for bad in [
+            "",
+            "plain",
+            "@example.com",
+            "a@",
+            "a@b",
+            "a@.com",
+            "a@com.",
+            "a@@b.co",
+            "a b@example.com",
+            "a@exa mple.com",
+            "a@b@c.com",
+        ] {
+            assert!(
+                !AuthService::is_valid_email(bad),
+                "{bad:?} should be invalid"
+            );
+        }
     }
 }
