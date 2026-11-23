@@ -17,6 +17,7 @@ import {
   PASTE_TAG,
   type PasteCommandType,
 } from "lexical";
+import { normalizePastedText } from "@/lib/paste-text";
 
 function htmlText(html: string): string {
   const body = new DOMParser().parseFromString(html, "text/html").body;
@@ -94,9 +95,9 @@ export function ComposerPastePlugin({ onAttachmentError }: { onAttachmentError: 
       const plain = transfer?.getData("text/plain");
       const html = transfer?.getData("text/html");
       const uri = transfer?.getData("text/uri-list");
-      const text = (plain || (html ? htmlText(html) : "") ||
+      const text = normalizePastedText(plain || (html ? htmlText(html) : "") ||
         uri?.split(/\r\n?|\n/).filter((line) => !line.startsWith("#")).join("\n") ||
-        ("data" in event ? event.data : "") || "").replace(/\r\n?/g, "\n");
+        ("data" in event ? event.data : "") || "");
       if (!files.length && !text) return false;
       const selection = $getSelection();
       if (!files.length && !$isRangeSelection(selection) && !$isNodeSelection(selection)) return false;

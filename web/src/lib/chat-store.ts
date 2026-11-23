@@ -48,6 +48,13 @@ function optimisticStatusAfterResolve(
   return current;
 }
 
+/** Client-side id prefix for a user message we show before the server echoes it. */
+const OPTIMISTIC_USER_ID_PREFIX = "__user_";
+
+function isOptimisticUserMessage(msg: MessageResponse): boolean {
+  return msg.id.startsWith(OPTIMISTIC_USER_ID_PREFIX);
+}
+
 interface ToolCallPart {
   type: "tool-call";
   id: string;
@@ -233,7 +240,7 @@ export class ChatStore {
   addUserMessage(content: string, attachments?: Attachment[]) {
     this.activityRevision += 1;
     this.messages.push({
-      id: `__user_${Date.now()}`,
+      id: `${OPTIMISTIC_USER_ID_PREFIX}${Date.now()}`,
       chat_id: "",
       role: "user",
       content,
@@ -263,9 +270,28 @@ export class ChatStore {
       const existing = new Set(this.messages.map((message) => message.id));
       // Refresh persisted messages without overwriting events or optimistic
       // changes that arrived while the request was in flight.
+      const historical = messages.filter((message) => !existing.has(message.id));
+      // An optimistic placeholder and its persisted row are the same message
+      // under two ids, so the id filter above cannot pair them and the user
+      // would see what they sent twice. This reload runs on every SSE
+      // reconnect, exactly when the server may already have stored a message
+      // still shown optimistically, so pair them on what the user typed.
+      // Only a row arriving for the first time may claim a placeholder, and it
+      // claims exactly one: repeating yourself ("ok", "ok") is two messages.
+      const claimed = new Set<MessageResponse>();
+      const pending = this.messages.filter(isOptimisticUserMessage);
+      for (const row of historical) {
+        if (row.role !== "user") continue;
+        const match = pending.find(
+          (p) => !claimed.has(p) && (p.content ?? "") === (row.content ?? ""),
+        );
+        if (match) claimed.add(match);
+      }
       this.messages = [
-        ...messages.filter((message) => !existing.has(message.id)),
-        ...this.messages.map((message) => unchanged ? stored.get(message.id) ?? message : message),
+        ...historical,
+        ...this.messages
+          .filter((message) => !claimed.has(message))
+          .map((message) => unchanged ? stored.get(message.id) ?? message : message),
       ];
       this.sortMessagesChronologically();
       if (unchanged && !pendingSend && latest?.role === "agent") {
@@ -485,18 +511,38 @@ export class ChatStore {
       }
 
       case "chat_message": {
-        // Replace optimistic user message with the real one from the backend
-        if (event.message.role === "user") {
-          const optIdx = this.messages.findIndex((m) => m.id.startsWith("__user_"));
+        const incoming = event.message;
+        const known = this.messages.some((m) => m.id === incoming.id);
+        // Replace the optimistic user message with the real one from the
+        // backend — but only for a row the thread has not seen before. The
+        // server re-broadcasts a full `chat_message` whenever a row is
+        // updated (`save_updated_message` does this to the user's own request
+        // message on the command path) and a reconnect replays them, so an
+        // echo is not proof of a new message. A repeat echo was reconciled
+        // the first time it arrived; letting it claim a placeholder again
+        // deletes whatever the user has sent since.
+        if (incoming.role === "user" && !known) {
+          // Pair on what the user typed: with two messages in flight the
+          // first placeholder in the list is not necessarily this one, and
+          // taking it swaps one message for a copy of the other. The oldest
+          // placeholder is the fallback, for a row whose text the server
+          // rewrote on its way to storage.
+          const byContent = this.messages.findIndex(
+            (m) => isOptimisticUserMessage(m) && m.content === incoming.content,
+          );
+          const optIdx =
+            byContent >= 0
+              ? byContent
+              : this.messages.findIndex(isOptimisticUserMessage);
           if (optIdx >= 0) {
-            this.messages[optIdx] = event.message;
+            this.messages[optIdx] = incoming;
             this.sortMessagesChronologically();
             break;
           }
         }
         // Skip if this message ID is already in the array
-        if (!this.messages.some((m) => m.id === event.message.id)) {
-          this.messages.push(event.message);
+        if (!known) {
+          this.messages.push(incoming);
           this.sortMessagesChronologically();
         }
         break;
@@ -707,6 +753,15 @@ export class ChatStore {
     }
   }
 
+  /**
+   * Drop the in-flight turn's state and return the thread to idle.
+   *
+   * This notifies: callers outside `handleEvent` (a send that failed, a Stop
+   * the server had nothing to cancel) were otherwise clearing `isRunning`
+   * without ever waking `useSyncExternalStore`, so the composer kept showing
+   * a spinner and a Stop button for a turn that no longer existed — and Stop
+   * could never clear it, because there was nothing left to stop.
+   */
   failMessage(error: MessageError, messageId?: string) {
     const display = this.getDisplayMessages();
     const last = display[display.length - 1];
@@ -743,6 +798,7 @@ export class ChatStore {
       clearTimeout(this.retryTimer);
       this.retryTimer = null;
     }
+    this.notify();
   }
 }
 
