@@ -1,4 +1,4 @@
-import { ensureAccessToken, API_URL } from "./api-client";
+import { ensureAccessToken, refreshStaleToken, API_URL } from "./api-client";
 import type { MessageError, MessageResponse, Notification, PauseReason } from "./types";
 
 
@@ -36,9 +36,13 @@ export interface UsageRecorded {
 }
 
 
+/// Lifecycle of the row an `entity_updated` event describes. Mirrors
+/// `EntityAction` in `crates/frona-server/src/chat/broadcast.rs`.
+export type EntityAction = "created" | "updated" | "deleted";
+
 export type GlobalSSEEvent =
   | { type: "title"; chatId: string; title: string }
-  | { type: "entity_updated"; chatId: string; table: string; recordId: string; fields: Record<string, unknown> }
+  | { type: "entity_updated"; chatId: string; table: string; recordId: string; action: EntityAction; spaceId: string | null; fields: Record<string, unknown> }
   | { type: "task_update"; taskId: string; status: string; sourceChatId: string | null; title: string; chatId: string | null; resultSummary: string | null }
   | { type: "activity_changed" }
   | { type: "inference_count"; count: number }
@@ -239,9 +243,23 @@ export class SSEEventBus {
     const headers: Record<string, string> = {};
     if (tokenResult.ok) headers["Authorization"] = `Bearer ${tokenResult.token}`;
 
+    const open = () =>
+      fetch(`${API_URL}/api/stream`, { headers, signal, credentials: "include" });
+
     let res: Response;
     try {
-      res = await fetch(`${API_URL}/api/stream`, { headers, signal, credentials: "include" });
+      res = await open();
+
+      // The stream outlives the access token, so a 401 here is an ordinary
+      // expiry. Without this refresh the reconnect loop replays the dead token
+      // on every backoff tick and the session never recovers.
+      if (res.status === 401 && tokenResult.ok) {
+        const refreshed = await refreshStaleToken(tokenResult.token);
+        if (refreshed.ok) {
+          headers["Authorization"] = `Bearer ${refreshed.token}`;
+          res = await open();
+        }
+      }
     } catch (err) {
       if (err instanceof DOMException && err.name === "AbortError") return;
       throw err;
@@ -361,6 +379,10 @@ export class SSEEventBus {
           chatId,
           table: parsed.table as string,
           recordId: parsed.record_id as string,
+          // Older servers only ever meant "updated" here; treat a missing
+          // action as that rather than dropping the event.
+          action: (parsed.action as EntityAction | undefined) ?? "updated",
+          spaceId: (parsed.space_id as string | null | undefined) ?? null,
           fields: parsed.fields as Record<string, unknown>,
         });
         break;

@@ -5,11 +5,15 @@ export const API_URL = process.env.NEXT_PUBLIC_FRONA_SERVER_BACKEND_URL || "";
 
 /// `kind: "unavailable"` (network failure or 5xx) means "don't infer
 /// session validity" - callers should retry / show offline, not log out.
+/// `code` is the server's machine-readable auth code (`token_expired`,
+/// `invalid_credentials`, ...) when the body carried one. `messageError` is
+/// the server's structured `MessageError`, when the body carried one.
 class ApiError extends Error {
   constructor(
     public status: number,
     message: string,
     public kind: "http" | "unavailable" = "http",
+    public code?: string,
     public messageError?: MessageError,
   ) {
     super(message);
@@ -24,6 +28,29 @@ export type RefreshResult =
 
 let accessToken: string | null = null;
 let refreshPromise: Promise<RefreshResult> | null = null;
+
+const sessionExpiredListeners = new Set<() => void>();
+
+/// Fires once the server has confirmed the refresh cookie is dead - i.e. the
+/// session is genuinely over, not just the access token stale. `auth.ts`
+/// subscribes so the app gate can bounce to /login instead of leaving every
+/// in-flight request to render its own auth error.
+export function onSessionExpired(listener: () => void): () => void {
+  sessionExpiredListeners.add(listener);
+  return () => {
+    sessionExpiredListeners.delete(listener);
+  };
+}
+
+function notifySessionExpired() {
+  for (const listener of sessionExpiredListeners) {
+    try {
+      listener();
+    } catch {
+      // A bad listener must not break the request that discovered the expiry.
+    }
+  }
+}
 
 export function setAccessToken(token: string | null) {
   accessToken = token;
@@ -40,6 +67,9 @@ async function refreshAccessToken(): Promise<RefreshResult> {
       credentials: "include",
     });
     if (res.status === 401 || res.status === 403) {
+      // Drop the stale token so later calls don't replay a known-dead one.
+      accessToken = null;
+      notifySessionExpired();
       return { ok: false, reason: "unauthenticated" };
     }
     if (!res.ok) {
@@ -55,13 +85,33 @@ async function refreshAccessToken(): Promise<RefreshResult> {
   }
 }
 
-export async function ensureAccessToken(): Promise<RefreshResult> {
-  if (accessToken) return { ok: true, token: accessToken };
+/// Single-flight refresh. The server rotates the refresh pair and rejects the
+/// replay, so two concurrent refreshes mean one succeeds and the other is told
+/// the session is gone - which is how an ordinary expiry used to surface as an
+/// auth error mid-session. `staleToken` is the token whose 401 prompted this:
+/// if another caller has already replaced it, adopt theirs instead of spending
+/// the cookie again.
+function refreshOnce(staleToken: string | null): Promise<RefreshResult> {
+  if (accessToken && accessToken !== staleToken) {
+    return Promise.resolve({ ok: true, token: accessToken });
+  }
   if (refreshPromise) return refreshPromise;
   refreshPromise = refreshAccessToken().finally(() => {
     refreshPromise = null;
   });
   return refreshPromise;
+}
+
+export async function ensureAccessToken(): Promise<RefreshResult> {
+  if (accessToken) return { ok: true, token: accessToken };
+  return refreshOnce(null);
+}
+
+/// For long-lived connections (SSE, log tails) that hold a token for the life
+/// of a stream and so must handle their own 401 rather than going through
+/// [`apiFetch`]. Shares the single-flight refresh above.
+export function refreshStaleToken(staleToken: string): Promise<RefreshResult> {
+  return refreshOnce(staleToken);
 }
 
 /// Retries once on 401 with a fresh access token to cover the race where the
@@ -101,7 +151,7 @@ export async function apiFetch(
   let res = await doFetch();
 
   if (res.status === 401 && tokenResult.ok) {
-    const refreshed = await refreshAccessToken();
+    const refreshed = await refreshOnce(tokenResult.token);
     if (refreshed.ok) {
       headers["Authorization"] = `Bearer ${refreshed.token}`;
       res = await doFetch();
@@ -111,6 +161,20 @@ export async function apiFetch(
   }
 
   return res;
+}
+
+/// Auth codes callers surface verbatim in toasts and inline errors, so they get
+/// a sentence a user can act on. An expiry that survived the refresh retry
+/// means the session is over - saying so beats echoing the server's prose.
+function authMessage(code: string | undefined): string | undefined {
+  switch (code) {
+    case "token_expired":
+      return "Your session has expired. Please sign in again.";
+    case "token_invalid":
+      return "Your session is no longer valid. Please sign in again.";
+    default:
+      return undefined;
+  }
 }
 
 async function request<T>(
@@ -128,9 +192,16 @@ async function request<T>(
     const body = await res.json().catch(() => ({ error: res.statusText }));
     const messageError = isMessageError(body.message_error) ? body.message_error : undefined;
     if (res.status >= 500) {
-      throw new ApiError(res.status, "Server error", "unavailable", messageError);
+      throw new ApiError(res.status, "Server error", "unavailable", undefined, messageError);
     }
-    throw new ApiError(res.status, body.error || "Request failed", "http", messageError);
+    const code = typeof body.code === "string" ? body.code : undefined;
+    throw new ApiError(
+      res.status,
+      authMessage(code) ?? body.error ?? "Request failed",
+      "http",
+      code,
+      messageError,
+    );
   }
 
   if (res.status === 204 || res.headers.get("content-length") === "0") {
@@ -415,16 +486,17 @@ export async function listCommands(chatId: string): Promise<CommandsResponse> {
   return request<CommandsResponse>(`/api/chats/${chatId}/commands`);
 }
 
-export async function cancelGeneration(chatId: string): Promise<void> {
-  const tokenResult = await ensureAccessToken();
-  const headers: Record<string, string> = { "Content-Type": "application/json" };
-  if (tokenResult.ok) {
-    headers["Authorization"] = `Bearer ${tokenResult.token}`;
-  }
-  await fetch(`${API_URL}/api/chats/${chatId}/cancel`, {
-    method: "POST",
-    headers,
-  });
+export interface CancelResult {
+  /** False when the server found nothing running to stop for this chat. */
+  cancelled: boolean;
+  /** The chat's in-flight turn was cancelled. */
+  turn_cancelled?: boolean;
+  /** The task driving this chat was cancelled, so it won't start a new turn. */
+  task_cancelled?: boolean;
+}
+
+export async function cancelGeneration(chatId: string): Promise<CancelResult> {
+  return api.post<CancelResult>(`/api/chats/${chatId}/cancel`, {});
 }
 
 export async function cancelTask(taskId: string): Promise<void> {
@@ -457,6 +529,35 @@ export function unarchiveChat(chatId: string) {
 
 export function deleteChat(chatId: string) {
   return request<void>(`/api/chats/${chatId}`, { method: "DELETE" });
+}
+
+export interface DelegationInfo {
+  task_id: string;
+  agent_id: string;
+  agent_name: string | null;
+  status: "pending" | "inprogress" | "completed" | "failed" | "cancelled";
+  chat_id: string | null;
+  created_at: string;
+}
+
+export function getDelegations(chatId: string) {
+  return request<DelegationInfo[]>(`/api/chats/${chatId}/delegations`);
+}
+
+export function archiveSpace(spaceId: string) {
+  return request<import("./types").SpaceResponse>(`/api/spaces/${spaceId}/archive`, { method: "POST" });
+}
+
+export function unarchiveSpace(spaceId: string) {
+  return request<import("./types").SpaceResponse>(`/api/spaces/${spaceId}/unarchive`, { method: "POST" });
+}
+
+export function deleteSpace(spaceId: string) {
+  return request<void>(`/api/spaces/${spaceId}`, { method: "DELETE" });
+}
+
+export function getArchivedSpaces() {
+  return request<import("./types").SpaceResponse[]>(`/api/spaces/archived`);
 }
 
 export function deleteAgent(agentId: string) {
@@ -647,10 +748,11 @@ export const api = {
     request<T>(path, { method: "PUT", body: JSON.stringify(body) }),
   patch: <T>(path: string, body: unknown) =>
     request<T>(path, { method: "PATCH", body: JSON.stringify(body) }),
-  delete: <T>(path: string, body?: unknown) => request<T>(path, {
-    method: "DELETE",
-    body: body === undefined ? undefined : JSON.stringify(body),
-  }),
+  delete: <T>(path: string, body?: unknown) =>
+    request<T>(path, {
+      method: "DELETE",
+      body: body === undefined ? undefined : JSON.stringify(body),
+    }),
   uploadFile: async <T = { url: string }>(path: string, file: File): Promise<T> => {
     const formData = new FormData();
     formData.append("file", file);
