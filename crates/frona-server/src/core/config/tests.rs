@@ -544,3 +544,21 @@ fn configs_without_legacy_keys_are_left_byte_for_byte_alone() {
     let yaml = "models:\n  m:\n    provider: openai # keep\n    model: x\n";
     assert_eq!(super::loader::lower_legacy_model_keys(yaml).unwrap(), yaml);
 }
+
+#[test]
+fn a_legacy_azure_api_version_becomes_the_provider_attribute() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("config.yaml");
+    std::fs::write(
+        &path,
+        "providers:\n  azure:\n    base_url: https://res.openai.azure.com\n    api_key: k\n    api_version: 2025-01-01-preview\n  other:\n    provider: openai\n    api_key: k\n",
+    )
+    .unwrap();
+    let loaded = ConfigService::load_with_env(&path, Default::default()).unwrap();
+    let azure = &loaded.config.providers[&crate::core::Handle::const_validated("azure")];
+    assert_eq!(
+        azure.attributes["azure_api_version"],
+        serde_json::json!("2025-01-01-preview")
+    );
+    assert!(!azure.attributes.contains_key("api_version"));
+}

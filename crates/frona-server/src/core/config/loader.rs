@@ -184,7 +184,11 @@ impl ConfigService {
 const LEGACY_MODEL_KEYS: [&str; 3] = ["provider_routing", "route", "prompt_caching"];
 
 pub(super) fn lower_legacy_model_keys(yaml: &str) -> Result<String, AppError> {
-    if !LEGACY_MODEL_KEYS.iter().any(|key| yaml.contains(key)) {
+    if !LEGACY_MODEL_KEYS
+        .iter()
+        .chain(&["api_version"])
+        .any(|key| yaml.contains(key))
+    {
         return Ok(yaml.to_string());
     }
     let mut document: serde_yaml::Value =
@@ -198,10 +202,40 @@ pub(super) fn lower_legacy_model_keys(yaml: &str) -> Result<String, AppError> {
             changed |= lower_group(group);
         }
     }
+    if let Some(providers) = document
+        .get_mut("providers")
+        .and_then(serde_yaml::Value::as_mapping_mut)
+    {
+        for (handle, provider) in providers.iter_mut() {
+            changed |= lower_azure_api_version(handle, provider);
+        }
+    }
     if !changed {
         return Ok(yaml.to_string());
     }
     serde_yaml::to_string(&document).map_err(|error| AppError::Validation(error.to_string()))
+}
+
+/// Azure's `api_version` moved into the provider attributes as
+/// `azure_api_version`; the harness rejects the old key as an unknown attribute.
+fn lower_azure_api_version(handle: &serde_yaml::Value, provider: &mut serde_yaml::Value) -> bool {
+    use serde_yaml::Value;
+    let Some(map) = provider.as_mapping_mut() else {
+        return false;
+    };
+    let brand = map
+        .get("provider")
+        .and_then(Value::as_str)
+        .or_else(|| handle.as_str());
+    if brand != Some("azure") {
+        return false;
+    }
+    let Some(version) = map.remove("api_version") else {
+        return false;
+    };
+    map.entry(Value::String("azure_api_version".into()))
+        .or_insert(version);
+    true
 }
 
 fn lower_group(group: &mut serde_yaml::Value) -> bool {
