@@ -261,6 +261,10 @@ async fn final_http_bodies_all_existing_adapters_normal_and_streaming() {
         "mira",
         "galadriel",
         "huggingface",
+        "zai",
+        "venice",
+        "minimax",
+        "byteplus",
         "custom-brand",
         "kimi-for-coding",
     ] {

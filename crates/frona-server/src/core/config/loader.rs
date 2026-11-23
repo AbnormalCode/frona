@@ -115,7 +115,7 @@ impl ConfigService {
             .unwrap();
 
         if let Some(content) = yaml_content {
-            let expanded = expand_config_env_vars(content)?;
+            let expanded = lower_legacy_model_keys(&expand_config_env_vars(content)?)?;
             builder =
                 builder.add_source(config::File::from_str(&expanded, config::FileFormat::Yaml));
         }
@@ -173,4 +173,71 @@ impl ConfigService {
 
         Ok(config)
     }
+}
+
+/// Model-level keys the pre-rebuild config accepted for OpenRouter. The harness
+/// schema has no such fields (and rejects unknown ones), but every request body
+/// takes native `extra_params`, so a config written for the old layout keeps
+/// working by moving them there: `provider_routing` is sent as OpenRouter's
+/// `provider` object, `route` as `route`. `prompt_caching` has no equivalent
+/// (the harness does not place cache breakpoints for OpenRouter) and is dropped.
+const LEGACY_MODEL_KEYS: [&str; 3] = ["provider_routing", "route", "prompt_caching"];
+
+pub(super) fn lower_legacy_model_keys(yaml: &str) -> Result<String, AppError> {
+    if !LEGACY_MODEL_KEYS.iter().any(|key| yaml.contains(key)) {
+        return Ok(yaml.to_string());
+    }
+    let mut document: serde_yaml::Value =
+        serde_yaml::from_str(yaml).map_err(|error| AppError::Validation(error.to_string()))?;
+    let mut changed = false;
+    if let Some(models) = document
+        .get_mut("models")
+        .and_then(serde_yaml::Value::as_mapping_mut)
+    {
+        for (_, group) in models.iter_mut() {
+            changed |= lower_group(group);
+        }
+    }
+    if !changed {
+        return Ok(yaml.to_string());
+    }
+    serde_yaml::to_string(&document).map_err(|error| AppError::Validation(error.to_string()))
+}
+
+fn lower_group(group: &mut serde_yaml::Value) -> bool {
+    use serde_yaml::Value;
+    let Some(map) = group.as_mapping_mut() else {
+        return false;
+    };
+    let mut changed = false;
+    let mut lowered: Vec<(&str, Value)> = Vec::new();
+    for key in LEGACY_MODEL_KEYS {
+        if let Some(value) = map.remove(key) {
+            changed = true;
+            match key {
+                "provider_routing" => lowered.push(("provider", value)),
+                "route" => lowered.push(("route", value)),
+                _ => tracing::warn!(
+                    "Ignoring models.*.prompt_caching: OpenRouter cache breakpoints are not sent"
+                ),
+            }
+        }
+    }
+    if !lowered.is_empty() {
+        let extra = map
+            .entry(Value::String("extra_params".into()))
+            .or_insert_with(|| Value::Mapping(Default::default()));
+        if let Some(extra) = extra.as_mapping_mut() {
+            for (name, value) in lowered {
+                // An explicit extra_params entry wins over the legacy key.
+                extra.entry(Value::String(name.into())).or_insert(value);
+            }
+        }
+    }
+    if let Some(fallbacks) = map.get_mut("fallbacks").and_then(Value::as_sequence_mut) {
+        for fallback in fallbacks {
+            changed |= lower_group(fallback);
+        }
+    }
+    changed
 }

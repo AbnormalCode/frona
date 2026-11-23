@@ -266,6 +266,9 @@ impl ModelRegistryConfig {
             ("mira", "MIRA_API_KEY"),
             ("galadriel", "GALADRIEL_API_KEY"),
             ("huggingface", "HUGGINGFACE_API_KEY"),
+            ("zai", "ZAI_API_KEY"),
+            ("venice", "VENICE_API_KEY"),
+            ("minimax", "MINIMAX_API_KEY"),
         ];
         for (name, env_var) in known {
             if std::env::var(env_var).is_ok() {
@@ -277,6 +280,18 @@ impl ModelRegistryConfig {
                     },
                 );
             }
+        }
+        // BytePlus can't ride the key-only table: its base_url selects which
+        // account the key belongs to (international vs mainland Volcengine).
+        if std::env::var("BYTEPLUS_API_KEY").is_ok() {
+            providers.insert(
+                Handle::const_validated("byteplus"),
+                ModelProviderConfig {
+                    api_key: Some("${BYTEPLUS_API_KEY}".into()),
+                    base_url: std::env::var("BYTEPLUS_API_BASE_URL").ok(),
+                    ..Default::default()
+                },
+            );
         }
         if let Ok(url) = std::env::var("OLLAMA_API_BASE_URL") {
             providers.insert(

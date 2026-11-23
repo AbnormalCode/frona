@@ -488,3 +488,59 @@ fn takeover_method_defaults_to_the_live_view_and_accepts_the_debugger() {
         "an unknown method must not silently fall back"
     );
 }
+
+#[test]
+fn legacy_openrouter_model_keys_are_lowered_into_extra_params() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("config.yaml");
+    std::fs::write(
+        &path,
+        r#"
+providers:
+  openrouter:
+    api_key: sk-test
+models:
+  primary:
+    provider: openrouter
+    model: anthropic/claude-sonnet
+    prompt_caching: true
+    route: fallback
+    provider_routing:
+      only: [anthropic]
+      data_collection: deny
+    fallbacks:
+      - provider: openrouter
+        model: openai/gpt-5
+        provider_routing:
+          zdr: true
+"#,
+    )
+    .unwrap();
+    let loaded = ConfigService::load_with_env(&path, Default::default()).unwrap();
+    let primary = &loaded.config.models["primary"];
+    assert_eq!(primary.common.extra_params["route"], "fallback");
+    assert_eq!(
+        primary.common.extra_params["provider"],
+        serde_json::json!({"only": ["anthropic"], "data_collection": "deny"})
+    );
+    assert_eq!(
+        primary.common.fallbacks[0].common.extra_params["provider"],
+        serde_json::json!({"zdr": true})
+    );
+}
+
+#[test]
+fn an_explicit_extra_params_entry_wins_over_a_legacy_key() {
+    let lowered = super::loader::lower_legacy_model_keys(
+        "models:\n  m:\n    provider: openrouter\n    model: x\n    route: fallback\n    extra_params:\n      route: other\n",
+    )
+    .unwrap();
+    assert!(lowered.contains("route: other"));
+    assert!(!lowered.contains("route: fallback"));
+}
+
+#[test]
+fn configs_without_legacy_keys_are_left_byte_for_byte_alone() {
+    let yaml = "models:\n  m:\n    provider: openai # keep\n    model: x\n";
+    assert_eq!(super::loader::lower_legacy_model_keys(yaml).unwrap(), yaml);
+}

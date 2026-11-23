@@ -62,6 +62,9 @@ impl ResolvedConnection {
             "amazon-bedrock" => ("bedrock", "api_key"),
             "kimi-for-coding" => ("moonshot", "subscription"),
             "moonshotai" => ("moonshot", "api_key"),
+            // BytePlus ModelArk and Volcengine Ark are the international and
+            // mainland halves of one platform; models.dev lists it as volcengine.
+            "byteplus" => ("volcengine", "api_key"),
             "openai" if method == Some(CredentialMethod::Oauth) => ("openai", "subscription"),
             brand => (brand, "api_key"),
         }
@@ -84,6 +87,7 @@ impl ResolvedConnection {
             // These recipes intentionally use generic OpenAI wire behavior.
             "xai" => "xai",
             "galadriel" => "galadriel",
+            "byteplus" => "byteplus",
             _ => self
                 .rig_provider
                 .as_ref()
@@ -221,6 +225,10 @@ impl ProviderPlatform {
             "mira",
             "galadriel",
             "huggingface",
+            "zai",
+            "venice",
+            "minimax",
+            "byteplus",
         ]
     }
 
@@ -286,7 +294,12 @@ impl ProviderPlatform {
                 )
             }
             None => {
-                let adapter = config.adapter.ok_or_else(|| {
+                // `generic` is the pre-migration name for "any OpenAI-compatible
+                // endpoint": the OpenAI adapter pointed at base_url.
+                let adapter = config
+                    .adapter
+                    .or((brand == "generic").then_some(AdapterId::Openai))
+                    .ok_or_else(|| {
                     InferenceError::ConfigError(format!(
                         "providers.{handle}.adapter: unknown brand '{brand}' requires a compiled adapter"
                     ))
@@ -454,6 +467,26 @@ fn recipe(brand: &str) -> Option<Recipe> {
             API_KEY_HUGGINGFACE,
         )
         .endpoint("https://router.huggingface.co"),
+        "zai" => Recipe::openai_compatible(ProviderId::new(
+            rig_core::providers::zai::PROVIDER_NAME,
+            rig_core::providers::registry::Format::OpenAi,
+        ))
+        .endpoint("https://api.z.ai/api/paas/v4"),
+        "venice" => Recipe::openai_compatible(ProviderId::new(
+            rig_core::providers::venice::PROVIDER_NAME,
+            rig_core::providers::registry::Format::OpenAi,
+        ))
+        .endpoint("https://api.venice.ai/api/v1"),
+        "minimax" => Recipe::openai_compatible(ProviderId::new(
+            rig_core::providers::minimax::PROVIDER_NAME,
+            rig_core::providers::registry::Format::OpenAi,
+        ))
+        .endpoint("https://api.minimax.io/v1"),
+        // No Rig adapter: plain OpenAI chat wire against ModelArk. The
+        // endpoint selects the account region (international vs mainland
+        // Volcengine), so base_url overrides it.
+        "byteplus" => Recipe::openai_compatible(rig(rig_core::providers::openai::PROVIDER_NAME))
+            .endpoint("https://ark.ap-southeast.bytepluses.com/api/v3"),
         _ => return None,
     };
     Some(recipe)
@@ -749,7 +782,7 @@ pub fn build_provider(
     });
     let selectable_route = resolved.adapter == AdapterId::Openai
         && rig.vendor() == "openai"
-        && !matches!(resolved.brand.as_str(), "xai" | "galadriel");
+        && !matches!(resolved.brand.as_str(), "xai" | "galadriel" | "byteplus");
     Ok(ProviderConnection {
         model: Arc::new(
             RigProvider::from_model_factory(
@@ -866,6 +899,10 @@ mod tests {
             ("mira", "mira"),
             ("galadriel", "galadriel"),
             ("huggingface", "huggingface"),
+            ("zai", "zai"),
+            ("venice", "venice"),
+            ("minimax", "minimax"),
+            ("byteplus", "byteplus"),
         ];
         assert_eq!(
             expected.iter().map(|(brand, _)| *brand).collect::<Vec<_>>(),
@@ -962,6 +999,51 @@ mod tests {
         assert_eq!(
             resolved.effective_base_url.as_deref(),
             Some("https://models.example/v1")
+        );
+    }
+
+    #[test]
+    fn the_legacy_generic_handle_means_openai_compatible_at_base_url() {
+        let resolved = ProviderPlatform::resolve(
+            &handle("generic"),
+            &ModelProviderConfig {
+                base_url: Some("https://models.example/v1".into()),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        assert_eq!(resolved.adapter, AdapterId::Openai);
+        assert_eq!(
+            resolved.effective_base_url.as_deref(),
+            Some("https://models.example/v1")
+        );
+
+        // Still needs somewhere to send requests.
+        assert!(
+            ProviderPlatform::resolve(&handle("generic"), &ModelProviderConfig::default()).is_err()
+        );
+    }
+
+    #[test]
+    fn byteplus_resolves_to_the_volcengine_catalog_and_honours_a_regional_endpoint() {
+        let default = ProviderPlatform::resolve(&handle("byteplus"), &Default::default()).unwrap();
+        assert_eq!(default.catalog_identity(None), ("volcengine", "api_key"));
+        assert_eq!(
+            default.effective_base_url.as_deref(),
+            Some("https://ark.ap-southeast.bytepluses.com/api/v3")
+        );
+
+        let mainland = ProviderPlatform::resolve(
+            &handle("byteplus"),
+            &ModelProviderConfig {
+                base_url: Some("https://ark.cn-beijing.volces.com/api/v3".into()),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        assert_eq!(
+            mainland.effective_base_url.as_deref(),
+            Some("https://ark.cn-beijing.volces.com/api/v3")
         );
     }
 

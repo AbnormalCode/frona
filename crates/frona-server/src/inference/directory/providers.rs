@@ -365,6 +365,10 @@ fn built_in_name(brand: &str) -> String {
         "moonshotai" => "Moonshot AI",
         "togetherai" => "Together AI",
         "huggingface" => "Hugging Face",
+        "zai" => "Z.ai",
+        "venice" => "Venice",
+        "minimax" => "MiniMax",
+        "byteplus" => "BytePlus",
         other => other,
     }
     .into()

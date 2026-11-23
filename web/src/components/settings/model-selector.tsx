@@ -29,6 +29,10 @@ const PROVIDER_LABELS: Record<string, string> = {
   mira: "Mira",
   galadriel: "Galadriel",
   huggingface: "Hugging Face",
+  zai: "Z.ai",
+  venice: "Venice",
+  minimax: "MiniMax",
+  byteplus: "BytePlus",
   ollama: "Ollama",
 };
 
