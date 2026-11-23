@@ -39,6 +39,11 @@ impl ModelProviderRegistry {
             .ok_or_else(|| InferenceError::ModelGroupNotFound(reference.as_str().into()))
     }
 
+    /// Every configured model group, in no particular order.
+    pub(crate) fn groups(&self) -> impl Iterator<Item = &ModelGroup> {
+        self.model_groups.values()
+    }
+
     pub fn resolve_with_fallback(
         &self,
         reference: &ModelRef,

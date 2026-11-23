@@ -521,6 +521,20 @@ impl Harness {
             rig_history[index] = rig_core::completion::Message::user(rendered_prompt);
         }
 
+        // A model that can't take images would have the whole request refused by
+        // its provider; hand it a transcription of them (or a marker) instead.
+        crate::inference::vision::adapt_history_for_model(
+            &mut rig_history,
+            &model_group,
+            self.chat_service.model_providers(),
+            &self.usage_service,
+            user_id,
+            &tool_ctx.agent.id,
+            chat_id,
+            message_id,
+        )
+        .await;
+
         // Validate after channel prompts and command overrides have made their
         // final changes, before inference can trim the active request.
         crate::chat::compactor::validate_initial_context(

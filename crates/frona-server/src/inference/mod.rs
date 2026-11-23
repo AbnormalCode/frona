@@ -14,6 +14,7 @@ pub mod tool_call;
 pub mod tool_loop;
 pub mod transcription;
 pub mod usage;
+pub mod vision;
 
 pub use self::usage::{CompactionTarget, InferenceKind, UsageContext};
 

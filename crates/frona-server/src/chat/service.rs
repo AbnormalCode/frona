@@ -936,8 +936,19 @@ impl ChatService {
         } else {
             request_signature
         };
-        let rig_history = request.messages;
+        let mut rig_history = request.messages;
         let input_token_estimate = conversation.input_token_estimate();
+        crate::inference::vision::adapt_history_for_model(
+            &mut rig_history,
+            &model_group,
+            &self.model_providers,
+            &self.usage_service,
+            user_id,
+            &chat.agent_id,
+            chat_id,
+            &user_message.id,
+        )
+        .await;
 
         // Pre-allocate the message id so the usage row's message_id matches
         // the assistant Message that's about to be persisted.

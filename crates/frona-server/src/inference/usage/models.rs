@@ -137,6 +137,13 @@ pub enum InferenceKind {
         agent_id: String,
         chat_id: Option<String>,
     },
+    /// A pre-pass that transcribes/describes image attachments with a
+    /// vision-capable model so a text-only agent model can still use them.
+    Transcription {
+        agent_id: String,
+        chat_id: String,
+        message_id: String,
+    },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, SurrealValue, PartialEq, Eq)]
@@ -163,7 +170,8 @@ impl InferenceKind {
             | Self::ToolTurn { agent_id, .. }
             | Self::Title { agent_id, .. }
             | Self::Signal { agent_id, .. }
-            | Self::Router { agent_id, .. } => Some(agent_id),
+            | Self::Router { agent_id, .. }
+            | Self::Transcription { agent_id, .. } => Some(agent_id),
             Self::Memory => None,
             Self::Compaction { target } => match target {
                 CompactionTarget::Chat { agent_id, .. } | CompactionTarget::Agent { agent_id } => {
@@ -179,7 +187,8 @@ impl InferenceKind {
             Self::Text { chat_id, .. }
             | Self::ToolTurn { chat_id, .. }
             | Self::Title { chat_id, .. }
-            | Self::Signal { chat_id, .. } => Some(chat_id),
+            | Self::Signal { chat_id, .. }
+            | Self::Transcription { chat_id, .. } => Some(chat_id),
             Self::Router { chat_id, .. } => chat_id.as_deref(),
             Self::Memory => None,
             Self::Compaction {
@@ -202,7 +211,8 @@ impl InferenceKind {
         match self {
             Self::Text { message_id, .. }
             | Self::ToolTurn { message_id, .. }
-            | Self::Signal { message_id, .. } => Some(message_id),
+            | Self::Signal { message_id, .. }
+            | Self::Transcription { message_id, .. } => Some(message_id),
             _ => None,
         }
     }
@@ -223,6 +233,7 @@ impl InferenceKind {
             Self::Memory => "Memory",
             Self::Signal { .. } => "Signal",
             Self::Router { .. } => "Router",
+            Self::Transcription { .. } => "Transcription",
         }
     }
 }

@@ -252,6 +252,11 @@ impl ModelProviderService {
         self.registry.resolve(reference)
     }
 
+    /// Every configured model group, in no particular order.
+    pub fn model_groups(&self) -> impl Iterator<Item = &frona_harness::inference::ModelGroup> {
+        self.registry.groups()
+    }
+
     pub fn resolve_with_fallback(
         &self,
         reference: &frona_harness::inference::ModelRef,

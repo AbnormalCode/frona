@@ -209,7 +209,7 @@ pub async fn run_tool_loop(
 pub async fn run_tool_loop_controlled(
     model_group: &ModelGroup,
     system_prompt: &str,
-    chat_history: Vec<RigMessage>,
+    mut chat_history: Vec<RigMessage>,
     tool_registry: &AgentToolRegistry,
     event_tx: EventSender,
     ctx: &InferenceContext,
@@ -254,10 +254,6 @@ pub async fn run_tool_loop_controlled(
             );
         }
         let projected = project_messages(&conversation.request_messages().map_err(protocol_error)?);
-        let input = conversation
-            .projected_input(&projected)
-            .map_err(protocol_error)?;
-        let history = chat_history.iter().cloned().chain(projected).collect();
         let kind = if tool_registry.is_empty() {
             super::usage::InferenceKind::Text {
                 agent_id: ctx.agent.id.clone(),
@@ -274,24 +270,67 @@ pub async fn run_tool_loop_controlled(
         };
         let usage_ctx =
             super::usage::UsageContext::new(kind, ctx.user.id.clone(), model_group.name.clone());
-        let mut turn_text = String::new();
-        let response = model_group
-            .stream_inference(
-                frona_harness::inference::ModelRequest {
-                    input_token_estimate: input_token_estimate.take(),
-                    system_prompt,
-                    history,
-                    tools: rig_tools.clone(),
-                    observations: frona_harness::inference::observation::Observations::new(
-                        &usage_service.scoped(&usage_ctx),
-                    ),
-                    overrides: Default::default(),
-                },
-                &event_tx,
-                input.execution(execution).map_err(protocol_error)?,
-                &mut turn_text,
-            )
-            .await;
+        let mut turn_text;
+        let mut image_retry_used = false;
+        let response = loop {
+            turn_text = String::new();
+            let input = conversation
+                .projected_input(&projected)
+                .map_err(protocol_error)?;
+            let history = chat_history
+                .iter()
+                .cloned()
+                .chain(projected.clone())
+                .collect();
+            let result = model_group
+                .stream_inference(
+                    frona_harness::inference::ModelRequest {
+                        input_token_estimate: input_token_estimate.take(),
+                        system_prompt,
+                        history,
+                        tools: rig_tools.clone(),
+                        observations: frona_harness::inference::observation::Observations::new(
+                            &usage_service.scoped(&usage_ctx),
+                        ),
+                        overrides: Default::default(),
+                    },
+                    &event_tx,
+                    input.execution(execution).map_err(protocol_error)?,
+                    &mut turn_text,
+                )
+                .await;
+            match result {
+                // The catalog said this model takes images and its provider
+                // disagreed: remember that, swap the images for text, and retry
+                // the call once rather than failing the turn.
+                Err(error)
+                    if !image_retry_used
+                        && crate::inference::vision::is_image_input_unsupported_error(
+                            &error.to_string(),
+                        )
+                        && crate::inference::vision::history_has_images(&chat_history) =>
+                {
+                    tracing::info!(
+                        model = %model_group.main.as_str(),
+                        "provider rejected image input; replacing images and retrying the call",
+                    );
+                    image_retry_used = true;
+                    crate::inference::vision::mark_text_only(&model_group.main);
+                    crate::inference::vision::replace_images_for_text_only_model(
+                        &mut chat_history,
+                        &model_group.main,
+                        chat_service.model_providers(),
+                        usage_service,
+                        &ctx.user.id,
+                        &ctx.agent.id,
+                        &active_chat(ctx)?.id,
+                        message_id,
+                    )
+                    .await;
+                }
+                other => break other,
+            }
+        };
         let output = match response {
             Ok(StreamResult::Contents(output)) => *output,
             Ok(StreamResult::Cancelled) => {

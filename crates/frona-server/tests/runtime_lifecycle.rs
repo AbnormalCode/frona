@@ -1543,3 +1543,109 @@ async fn shutdown(app: &ServerFixture) {
     app.state.shutdown_token.cancel();
     idle(app).await;
 }
+
+fn sent_images_and_text(script: &Script) -> (usize, String) {
+    use rig_core::completion::message::UserContent;
+    let history = script.history.lock().unwrap();
+    let mut images = 0;
+    let mut text = String::new();
+    for message in history.iter().flatten() {
+        if let Message::User { content } = message {
+            for part in content.iter() {
+                match part {
+                    UserContent::Image(_) => images += 1,
+                    UserContent::Text(t) => {
+                        text.push_str(&t.text);
+                        text.push('\n');
+                    }
+                    _ => {}
+                }
+            }
+        }
+    }
+    (images, text)
+}
+
+async fn send_picture(app: &ServerFixture, user: &frona::auth::User, chat_id: &str) {
+    let path = app
+        .state
+        .storage_service
+        .resolve_virtual_path(&frona::storage::VirtualPath::user(&user.handle, "pic.png"))
+        .unwrap();
+    tokio::fs::create_dir_all(path.parent().unwrap())
+        .await
+        .unwrap();
+    tokio::fs::write(&path, b"not-really-a-png").await.unwrap();
+    submit(
+        app,
+        &user.id,
+        chat_id,
+        SendMessageRequest {
+            content: "what is in this picture?".into(),
+            attachments: vec![frona::storage::Attachment {
+                transcript: None,
+                filename: "pic.png".into(),
+                content_type: "image/png".into(),
+                size_bytes: 16,
+                owner: format!("user:{}", user.id),
+                path: "pic.png".into(),
+                url: None,
+            }],
+            metadata: None,
+        },
+    )
+    .await
+    .unwrap();
+    idle(app).await;
+}
+
+#[tokio::test]
+async fn a_text_only_model_gets_a_marker_instead_of_the_image() {
+    let dir = tempfile::tempdir().unwrap();
+    let db = Surreal::new::<surrealdb::engine::local::Mem>(())
+        .await
+        .unwrap();
+    db.use_ns("frona").use_db("frona").await.unwrap();
+    let script = Script::new(vec![vec![AssistantContent::text("I can't see it")]]);
+    let mut model = group(script.clone());
+    model.inference.text_only_models = vec!["fixture".into()];
+    let runtime = fixture(db, dir.path(), model, vec![]).await;
+    let user = create_user(&runtime, frona::handle!("alice"), "Alice")
+        .await
+        .unwrap();
+    let agent = create_agent(&runtime, &user.id, agent()).await.unwrap();
+    let chat = create_chat(&runtime, &user.id, &agent.id).await.unwrap();
+
+    send_picture(&runtime, &user, &chat.id).await;
+
+    let (images, text) = sent_images_and_text(&script);
+    assert_eq!(images, 0, "the provider must never see the image: {text}");
+    assert!(
+        text.contains("does not support image input"),
+        "the agent is told the image was left out: {text}"
+    );
+    assert!(text.contains("what is in this picture?"));
+}
+
+#[tokio::test]
+async fn a_model_listed_as_vision_capable_still_receives_the_image() {
+    let dir = tempfile::tempdir().unwrap();
+    let db = Surreal::new::<surrealdb::engine::local::Mem>(())
+        .await
+        .unwrap();
+    db.use_ns("frona").use_db("frona").await.unwrap();
+    let script = Script::new(vec![vec![AssistantContent::text("A cat")]]);
+    let mut model = group(script.clone());
+    model.inference.vision_models = vec!["fixture".into()];
+    let runtime = fixture(db, dir.path(), model, vec![]).await;
+    let user = create_user(&runtime, frona::handle!("alice"), "Alice")
+        .await
+        .unwrap();
+    let agent = create_agent(&runtime, &user.id, agent()).await.unwrap();
+    let chat = create_chat(&runtime, &user.id, &agent.id).await.unwrap();
+
+    send_picture(&runtime, &user, &chat.id).await;
+
+    let (images, _) = sent_images_and_text(&script);
+    assert_eq!(images, 1);
+}

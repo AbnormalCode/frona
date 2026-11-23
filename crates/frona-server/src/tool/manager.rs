@@ -373,7 +373,7 @@ impl ToolManager {
 fn create_builtin_tools(state: &AppState) -> Vec<Arc<dyn AgentTool>> {
     use super::browser::tool::BrowserTool;
     use super::cli::CliTool;
-    use super::files::{EditTool, GlobTool, GrepTool, ReadTool, WriteTool};
+    use super::files::{AnalyzeImageTool, EditTool, GlobTool, GrepTool, ReadTool, WriteTool};
     use super::heartbeat::HeartbeatTool;
     use super::notify_human::NotifyHumanTool;
     use super::produce_file::ProduceFileTool;
@@ -411,6 +411,13 @@ fn create_builtin_tools(state: &AppState) -> Vec<Arc<dyn AgentTool>> {
         Arc::new(ReadTool::new(
             state.storage_service.clone(),
             state.sandbox_manager.clone(),
+            prompts.clone(),
+        )),
+        Arc::new(AnalyzeImageTool::new(
+            state.storage_service.clone(),
+            state.sandbox_manager.clone(),
+            state.model_provider_service.clone(),
+            state.usage_service.clone(),
             prompts.clone(),
         )),
         Arc::new(WriteTool::new(
