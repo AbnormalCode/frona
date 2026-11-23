@@ -21,6 +21,9 @@ librsvg2-bin=2.54.7+dfsg-1~deb12u1
 libheif1=1.15.1-1+deb12u1
 libdjvulibre21=3.5.28-2.2~deb12u1
 
+# PDF rendering (pdftoppm, used by the read tool's render option)
+poppler-utils
+
 libpq5=15.20-0+deb12u1
 libmariadb3=1:10.11.19-0+deb12u1
 mariadb-common=1:10.11.19-0+deb12u1
