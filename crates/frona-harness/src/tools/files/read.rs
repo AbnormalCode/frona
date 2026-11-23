@@ -130,7 +130,7 @@ fn read_image(bytes: &[u8], mime: &str, path_arg: &str) -> Result<ToolOutput, Fi
     })
 }
 
-fn read_text(text: &str, offset: Option<usize>, limit: Option<usize>) -> ToolOutput {
+pub fn read_text(text: &str, offset: Option<usize>, limit: Option<usize>) -> ToolOutput {
     let lines: Vec<&str> = text.lines().collect();
     let total_lines = lines.len();
     let start = offset.map(|n| n.saturating_sub(1)).unwrap_or(0);

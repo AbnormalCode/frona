@@ -117,6 +117,7 @@ json_partial = "0.2"
 # `Soldering Iron`, `firmwareversion`) into the house convention. Already in the tree via
 # frona-derive; hand-rolling it produced a slug that lowercased whole words, which is how
 # `supportEmail` became `frona:supportemail`.
+pdf-extract = "0.12"
 tempfile = "3"
 ignore = "0.4.25"
 globset = "0.4"

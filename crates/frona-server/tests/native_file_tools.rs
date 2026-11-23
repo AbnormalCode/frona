@@ -663,3 +663,58 @@ async fn read_respects_filesystem_permissions_and_sandbox_denials() {
     assert!(!denied.text_content().contains("hidden-name.txt"));
     assert!(!denied.text_content().contains("Choose a file"));
 }
+
+#[tokio::test]
+async fn one_read_call_can_fetch_several_files_and_one_bad_path_does_not_sink_the_rest() {
+    let (fixture, ctx) = fixture().await;
+    let state = &fixture.state;
+    let workspace = state
+        .storage_service
+        .agent_workspace_path(&ctx.user.handle, &ctx.agent.handle);
+    let reader = ReadTool::new(
+        state.storage_service.clone(),
+        state.sandbox_manager.clone(),
+        state.prompts.clone(),
+    );
+    tokio::fs::create_dir_all(&workspace).await.unwrap();
+    tokio::fs::write(workspace.join("a.txt"), "alpha")
+        .await
+        .unwrap();
+    tokio::fs::write(workspace.join("b.txt"), "bravo")
+        .await
+        .unwrap();
+
+    let both = reader
+        .execute("read", json!({"paths": ["a.txt", "b.txt"]}), &ctx)
+        .await
+        .unwrap();
+    assert!(both.is_success());
+    let text = both.text_content();
+    assert!(text.contains("===== a.txt =====\nalpha"), "{text}");
+    assert!(text.contains("===== b.txt =====\nbravo"), "{text}");
+
+    let one_missing = reader
+        .execute("read", json!({"paths": ["a.txt", "gone.txt"]}), &ctx)
+        .await
+        .unwrap();
+    assert!(
+        one_missing.is_success(),
+        "a batch only fails when every file did"
+    );
+    let text = one_missing.text_content();
+    assert!(text.contains("alpha"), "{text}");
+    assert!(text.contains("file not found: gone.txt"), "{text}");
+
+    let all_missing = reader
+        .execute("read", json!({"paths": ["x.txt", "y.txt"]}), &ctx)
+        .await
+        .unwrap();
+    assert!(!all_missing.is_success());
+
+    // The singular spelling every prompt example uses still works.
+    let single = reader
+        .execute("read", json!({"path": "b.txt"}), &ctx)
+        .await
+        .unwrap();
+    assert_eq!(single.text_content(), "bravo");
+}
