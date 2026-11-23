@@ -532,6 +532,7 @@ mod tests {
             status: crate::agent::task::models::TaskStatus::Completed,
             summary: None,
             schema: None,
+            citations: Vec::new(),
         });
         let mut second = msg(at(110), Some(MessageStatus::Completed));
         second.id = "task-completion-2".into();
@@ -542,6 +543,7 @@ mod tests {
             status: crate::agent::task::models::TaskStatus::Completed,
             summary: None,
             schema: None,
+            citations: Vec::new(),
         });
         let mut result = msg(at(120), Some(MessageStatus::Completed));
         result.id = "parent-result".into();

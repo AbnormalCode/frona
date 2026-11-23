@@ -1213,6 +1213,7 @@ mod tests {
                 status: TaskStatus::Completed,
                 summary: None,
                 schema: None,
+                citations: Vec::new(),
             }),
             ..make_message(MessageRole::TaskCompletion, "Task 'research' completed.")
         };
@@ -1230,6 +1231,7 @@ mod tests {
                 status: TaskStatus::Completed,
                 summary: None,
                 schema: None,
+                citations: Vec::new(),
             }),
             attachments: vec![Attachment {
                 transcript: None,

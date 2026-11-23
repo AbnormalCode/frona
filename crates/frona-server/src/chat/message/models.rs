@@ -70,6 +70,11 @@ pub enum MessageEvent {
         /// adapters, web UI) read this together with `message.content` (raw
         /// JSON) to format the result for humans.
         schema: Option<serde_json::Value>,
+        /// Websites consulted (`web_search`/`web_fetch`) while working the
+        /// task, derived from tool-call history rather than model prose.
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        #[surreal(default)]
+        citations: Vec<crate::agent::task::models::Citation>,
     },
     TaskMatch {
         task_id: String,

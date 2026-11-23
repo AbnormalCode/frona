@@ -5,14 +5,14 @@ use chrono::Utc;
 use tokio::sync::{Mutex, OwnedMutexGuard};
 use tokio_util::sync::CancellationToken;
 
-use crate::agent::task::models::{SignalMode, Task, TaskKind, TaskStatus};
+use crate::agent::task::models::{Citation, SignalMode, Task, TaskKind, TaskStatus};
 use crate::chat::message::models::{Message, MessageEvent, MessageRole, MessageStatus};
 use crate::chat::models::CreateChatRequest;
 use crate::core::error::AppError;
 use crate::core::execution::{ExecutionKind, ExecutionSource, ExecutionSourceKind, NewExecution};
 use crate::inference::InferenceResponse;
 use crate::inference::conversation::TaskConversationBuilder;
-use crate::inference::tool_call::TaskEvent;
+use crate::inference::tool_call::{TaskEvent, ToolCall};
 use crate::storage::Attachment;
 
 const MAX_TASK_RETRIES: usize = 10;
@@ -46,6 +46,7 @@ pub enum TaskLifecycleEvent {
     Completion {
         status: TaskStatus,
         summary: Option<String>,
+        citations: Vec<Citation>,
     },
     /// Non-terminal. Do NOT resume parent.
     Match {
@@ -53,6 +54,72 @@ pub enum TaskLifecycleEvent {
         summary: String,
         result: Option<serde_json::Value>,
     },
+}
+
+/// Websites the task consulted via `web_search`/`web_fetch`, derived from the
+/// task's own tool-call history so the completion summary can cite sources
+/// without depending on the model to transcribe URLs itself.
+fn citations_from_tool_calls(calls: &[ToolCall]) -> Vec<Citation> {
+    let mut seen = std::collections::HashSet::new();
+    let mut citations = Vec::new();
+    for call in calls {
+        let found = match call.name.as_str() {
+            "web_search" => extract_web_search_citations(&call.result),
+            "web_fetch" => call
+                .arguments
+                .get("url")
+                .and_then(|v| v.as_str())
+                .map(|url| {
+                    vec![Citation {
+                        title: None,
+                        url: url.to_string(),
+                    }]
+                })
+                .unwrap_or_default(),
+            _ => Vec::new(),
+        };
+        for c in found {
+            if seen.insert(c.url.clone()) {
+                citations.push(c);
+            }
+        }
+    }
+    citations
+}
+
+/// Parses the numbered `"{n}. {title}\n   {url}\n   {snippet}"` layout that
+/// `tool::web_search::format_results` produces.
+fn extract_web_search_citations(result: &str) -> Vec<Citation> {
+    let mut citations = Vec::new();
+    let mut prev_line: Option<&str> = None;
+    for line in result.lines() {
+        let trimmed = line.trim();
+        if trimmed.starts_with("http://") || trimmed.starts_with("https://") {
+            let title = prev_line
+                .map(strip_leading_number)
+                .filter(|t| !t.is_empty())
+                .map(str::to_string);
+            citations.push(Citation {
+                title,
+                url: trimmed.to_string(),
+            });
+        }
+        if !trimmed.is_empty() {
+            prev_line = Some(trimmed);
+        }
+    }
+    citations
+}
+
+/// Strips a leading `"N. "` result-index prefix, if present.
+fn strip_leading_number(s: &str) -> &str {
+    if let Some(dot_pos) = s.find(". ")
+        && dot_pos > 0
+        && s[..dot_pos].bytes().all(|b| b.is_ascii_digit())
+    {
+        return &s[dot_pos + 2..];
+    }
+    s
 }
 
 fn source_chat_id_for(task: &Task) -> Option<&str> {
@@ -140,7 +207,11 @@ fn build_completion_body(
 
 fn build_message_event(task: &Task, event: TaskLifecycleEvent) -> Option<(String, MessageEvent)> {
     match event {
-        TaskLifecycleEvent::Completion { status, summary } => {
+        TaskLifecycleEvent::Completion {
+            status,
+            summary,
+            citations,
+        } => {
             let (content, schema) = build_completion_body(task, &status, summary.as_deref())?;
             let evt = MessageEvent::TaskCompletion {
                 task_id: task.id.clone(),
@@ -152,6 +223,7 @@ fn build_message_event(task: &Task, event: TaskLifecycleEvent) -> Option<(String
                     Some(content.clone())
                 },
                 schema,
+                citations,
             };
             Some((content, evt))
         }
@@ -818,6 +890,19 @@ impl TaskExecutor {
         self.handle_error(&task, &error).await
     }
 
+    /// Fetches the task's own tool-call history and derives the websites it
+    /// consulted. Best-effort: a lookup failure yields no citations rather
+    /// than blocking delivery of the completion message.
+    async fn load_citations(&self, chat_id: &str) -> Vec<Citation> {
+        match self.harness.chat_service.get_tool_calls(chat_id).await {
+            Ok(calls) => citations_from_tool_calls(&calls),
+            Err(e) => {
+                tracing::error!(chat_id, error = %e, "load_citations: failed to load tool calls");
+                Vec::new()
+            }
+        }
+    }
+
     async fn find_lifecycle_event(&self, chat_id: &str) -> Option<LifecycleAction> {
         let messages = match self.harness.chat_service.get_stored_messages(chat_id).await {
             Ok(m) => m,
@@ -905,7 +990,7 @@ impl TaskExecutor {
     async fn handle_lifecycle_action(
         &self,
         task: &Task,
-        _chat_id: &str,
+        chat_id: &str,
         action: LifecycleAction,
     ) -> Result<(), AppError> {
         match action {
@@ -924,6 +1009,7 @@ impl TaskExecutor {
                     TaskLifecycleEvent::Completion {
                         status: TaskStatus::Completed,
                         summary: summary.clone(),
+                        citations: self.load_citations(chat_id).await,
                     },
                     attachments,
                 )
@@ -946,6 +1032,7 @@ impl TaskExecutor {
                     TaskLifecycleEvent::Completion {
                         status: TaskStatus::Failed,
                         summary,
+                        citations: Vec::new(),
                     },
                     attachments,
                 )
@@ -1247,6 +1334,7 @@ impl TaskExecutor {
             TaskLifecycleEvent::Completion {
                 status: TaskStatus::Failed,
                 summary: Some(error.to_string()),
+                citations: Vec::new(),
             },
             vec![],
         )
@@ -1495,6 +1583,113 @@ mod tests {
         assert!(tools.contains(&"complete_task"));
         assert!(tools.contains(&"fail_task"));
         assert!(!tools.contains(&"defer_task"));
+    }
+
+    fn tool_call(name: &str, arguments: serde_json::Value, result: &str) -> ToolCall {
+        ToolCall {
+            provider_item_id: None,
+            id: "tc1".into(),
+            chat_id: "task-chat".into(),
+            message_id: "m1".into(),
+            turn: 0,
+            provider_call_id: "call1".into(),
+            name: name.into(),
+            arguments,
+            result: result.into(),
+            success: true,
+            duration_ms: 0,
+            hitl: None,
+            task_event: None,
+            system_prompt: None,
+            description: None,
+            turn_text: None,
+            turn_reasoning: None,
+            signature: None,
+            created_at: Utc::now(),
+        }
+    }
+
+    #[test]
+    fn extract_web_search_citations_parses_numbered_results() {
+        let result = "1. Rust Programming\n   https://rust-lang.org\n   A systems programming language\n\n\
+                       2. Rust Book\n   https://doc.rust-lang.org/book/\n   The official Rust book";
+        let citations = extract_web_search_citations(result);
+        assert_eq!(citations.len(), 2);
+        assert_eq!(citations[0].title.as_deref(), Some("Rust Programming"));
+        assert_eq!(citations[0].url, "https://rust-lang.org");
+        assert_eq!(citations[1].title.as_deref(), Some("Rust Book"));
+        assert_eq!(citations[1].url, "https://doc.rust-lang.org/book/");
+    }
+
+    #[test]
+    fn extract_web_search_citations_handles_no_results() {
+        assert!(extract_web_search_citations("No results found.").is_empty());
+    }
+
+    #[test]
+    fn strip_leading_number_removes_numbering() {
+        assert_eq!(
+            strip_leading_number("1. Rust Programming"),
+            "Rust Programming"
+        );
+        assert_eq!(strip_leading_number("10. Rust Book"), "Rust Book");
+        assert_eq!(strip_leading_number("Not numbered"), "Not numbered");
+        // "v1. 2" isn't a leading numeric prefix — left untouched.
+        assert_eq!(
+            strip_leading_number("v1. 2 release notes"),
+            "v1. 2 release notes"
+        );
+    }
+
+    #[test]
+    fn citations_from_tool_calls_covers_web_search_and_web_fetch() {
+        let calls = vec![
+            tool_call(
+                "web_search",
+                serde_json::json!({"query": "rust"}),
+                "1. Rust Programming\n   https://rust-lang.org\n   snippet",
+            ),
+            tool_call(
+                "web_fetch",
+                serde_json::json!({"url": "https://doc.rust-lang.org/book/"}),
+                "# The Rust Book\n\ncontent",
+            ),
+            tool_call("shell", serde_json::json!({"command": "ls"}), "file.txt"),
+        ];
+        let citations = citations_from_tool_calls(&calls);
+        assert_eq!(citations.len(), 2);
+        assert_eq!(citations[0].url, "https://rust-lang.org");
+        assert_eq!(citations[1].url, "https://doc.rust-lang.org/book/");
+        assert_eq!(citations[1].title, None);
+    }
+
+    #[test]
+    fn citations_from_tool_calls_dedupes_by_url_preserving_order() {
+        let calls = vec![
+            tool_call(
+                "web_search",
+                serde_json::json!({"query": "rust"}),
+                "1. Rust\n   https://rust-lang.org\n   snippet",
+            ),
+            tool_call(
+                "web_fetch",
+                serde_json::json!({"url": "https://rust-lang.org"}),
+                "content",
+            ),
+        ];
+        let citations = citations_from_tool_calls(&calls);
+        assert_eq!(citations.len(), 1);
+        assert_eq!(citations[0].title.as_deref(), Some("Rust"));
+    }
+
+    #[test]
+    fn citations_from_tool_calls_empty_when_no_web_tools_used() {
+        let calls = vec![tool_call(
+            "shell",
+            serde_json::json!({"command": "ls"}),
+            "file.txt",
+        )];
+        assert!(citations_from_tool_calls(&calls).is_empty());
     }
 }
 

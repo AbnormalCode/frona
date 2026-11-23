@@ -1,7 +1,13 @@
 // Mirror of Rust `chat::channel::render::render_result_markdown`
 // (crates/frona-server/src/chat/channel/render.rs). Keep in lockstep.
+//
+// One deliberate divergence: the Rust renderer appends a flat "Sources"
+// markdown list because channels like Discord have no other way to show
+// citations. The web UI renders citations as its own collapsible component
+// (see SourcesList) instead, so this file leaves them out of the body text —
+// use getCitations() to read them separately.
 
-import type { MessageResponse, MessageEvent } from "./types";
+import type { MessageResponse, MessageEvent, Citation } from "./types";
 
 type JsonValue =
   | null
@@ -16,6 +22,21 @@ export function renderMessageBody(msg: MessageResponse): string {
   if (event?.type !== "TaskCompletion") {
     return msg.content || "";
   }
+  return renderTaskCompletionBody(msg, event);
+}
+
+/** Citations for a TaskCompletion message, or [] when there's nothing to show
+ * a Sources list for (e.g. a suppressed/empty completion body). */
+export function getCitations(msg: MessageResponse): Citation[] {
+  const event = msg.event;
+  if (event?.type !== "TaskCompletion" || !event.data.citations?.length) return [];
+  return renderMessageBody(msg).trim() ? event.data.citations : [];
+}
+
+function renderTaskCompletionBody(
+  msg: MessageResponse,
+  event: Extract<MessageEvent, { type: "TaskCompletion" }>,
+): string {
   const schema = event.data.schema;
   if (!schema) {
     return msg.content || "";
