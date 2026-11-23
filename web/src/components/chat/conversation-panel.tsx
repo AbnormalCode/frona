@@ -14,6 +14,7 @@ import { ChatPaginationContext } from "@/lib/chat-pagination-context";
 import { ChatHeader } from "./chat-header";
 import { TaskHeader } from "./task-header";
 import { AssistantThread } from "./assistant-thread";
+import { DelegationsPanel } from "./delegations-panel";
 import { ToolUIRegistry } from "./tool-uis";
 import { CronRunsTable } from "./cron-runs-table";
 import type { ChatResponse } from "@/lib/types";
@@ -84,6 +85,7 @@ export function ChatView({
         </div>
       )}
       <ToolUIRegistry />
+      {loaded && currentChatId && <DelegationsPanel chatId={currentChatId} />}
       {loaded ? <AssistantThread chatId={currentChatId ?? undefined} /> : <div className="flex-1" />}
     </>
   );

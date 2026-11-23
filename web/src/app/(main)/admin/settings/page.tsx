@@ -24,6 +24,8 @@ import { VoiceSection } from "@/components/settings/sections/voice-section";
 import { ServerVaultSection } from "@/components/settings/sections/vault-section";
 import { AdvancedSection } from "@/components/settings/sections/advanced-section";
 import { CostReportsSection } from "@/components/settings/sections/cost-reports-section";
+import { AgentsSection } from "@/components/settings/sections/agents-section";
+import { LogsSection } from "@/components/settings/sections/logs-section";
 import { SkillsSection } from "@/components/settings/sections/skills-section";
 import { SandboxSettingsSection } from "@/components/settings/sections/sandbox-section";
 import { getConfigDocument, updateConfig } from "@/lib/config-types";
@@ -34,6 +36,7 @@ import { acceptProviderDrafts, type ProviderDrafts } from "@/lib/provider-drafts
 const TABS = [
   { id: "providers", label: "Providers", saveable: true, divider: false },
   { id: "models", label: "Models", saveable: true, divider: false },
+  { id: "agents", label: "Agents", saveable: false, divider: false },
   { id: "memory", label: "Memory", saveable: true, divider: true },
   { id: "skills", label: "Skills", saveable: false, divider: false },
   { id: "search", label: "Search", saveable: true, divider: false },
@@ -49,6 +52,7 @@ const TABS = [
   { id: "timezone", label: "Timezone", saveable: true, divider: true },
   { id: "server", label: "Server", saveable: true, divider: false },
   { id: "advanced", label: "Advanced", saveable: true, divider: false },
+  { id: "logs", label: "Logs", saveable: false, divider: true },
 ] as const;
 
 type TabId = (typeof TABS)[number]["id"];
@@ -316,6 +320,8 @@ export default function AdminSettingsPage() {
 
             <div className="min-h-[400px]">
               {activeTab === "users" && <UsersSection />}
+              {activeTab === "agents" && <AgentsSection />}
+              {activeTab === "logs" && <LogsSection />}
               {activeTab === "costs" && <CostReportsSection />}
               {activeTab === "skills" && <SkillsSection scope="shared" />}
               {isConfigTab && configLoading && (

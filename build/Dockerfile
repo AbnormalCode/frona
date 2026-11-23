@@ -233,6 +233,10 @@ COPY --chown=frona:frona --from=catalogs /catalogs /app/share/catalogs
 COPY --chown=frona:frona --from=ontology /ontology /app/share/ontology
 
 ENV PATH="/app/bin:${PATH}"
+# Version reported at runtime (see core::app_version). Set from the VERSION
+# build-arg so releases don't need a Cargo.toml bump - which would invalidate
+# the cached Rust build and force a full recompile. Defaults to "dev".
+ENV FRONA_VERSION=$VERSION
 ENV FRONA_SERVER_STATIC_DIR=/app/static
 ENV FRONA_SERVER_DATA_DIR=/app/data
 ENV FRONA_SERVER_PORT=3001

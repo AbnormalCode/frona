@@ -2,7 +2,7 @@ use axum::body::Body;
 use axum::http::{Request, StatusCode};
 use tower::ServiceExt;
 
-use super::{auth_get, body_json, build_app, register_user, test_app_state};
+use super::{auth_get, auth_post_json, body_json, build_app, register_user, test_app_state};
 
 #[tokio::test]
 async fn test_health_returns_ok() {
@@ -99,5 +99,44 @@ async fn test_task_spawn_rejected_during_shutdown() {
     assert!(
         result.is_ok(),
         "run_task should return Ok even during shutdown"
+    );
+}
+
+#[tokio::test]
+async fn restart_and_the_log_stream_are_for_operators_only() {
+    let (state, _tmp) = test_app_state().await;
+    state.user_group_service.seed_built_in().await.unwrap();
+    // The first registered user becomes the admin; the second is an ordinary member.
+    let (admin_token, _) =
+        register_user(&state, "sysadmin", "sysadmin@example.com", "password123").await;
+    let (member_token, _) =
+        register_user(&state, "sysmember", "sysmember@example.com", "password123").await;
+
+    // Restarting drains every request and re-execs the process: not for any account.
+    let resp = build_app(state.clone())
+        .oneshot(auth_post_json(
+            "/api/system/restart",
+            &member_token,
+            serde_json::json!({}),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::FORBIDDEN);
+
+    // Server logs span every user.
+    let resp = build_app(state.clone())
+        .oneshot(auth_get("/api/system/logs/stream", &member_token))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::FORBIDDEN);
+
+    let resp = build_app(state)
+        .oneshot(auth_get("/api/system/logs/stream", &admin_token))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    assert_eq!(
+        resp.headers().get("content-type").unwrap(),
+        "text/event-stream"
     );
 }

@@ -243,3 +243,96 @@ async fn delete_space_other_user_returns_error() {
         resp.status()
     );
 }
+
+#[tokio::test]
+async fn archiving_a_space_moves_it_out_of_the_active_list_and_unarchiving_restores_it() {
+    let (state, _tmp) = test_app_state().await;
+    let (token, _) = register_user(&state, "arch-a", "archa@example.com", "password123").await;
+    let keep = create_space(&state, &token, "Keep").await;
+    let gone = create_space(&state, &token, "Gone").await;
+    let gone_id = gone["id"].as_str().unwrap().to_string();
+
+    let resp = build_app(state.clone())
+        .oneshot(auth_post_json(
+            &format!("/api/spaces/{gone_id}/archive"),
+            &token,
+            serde_json::json!({}),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    assert!(body_json(resp).await["archived_at"].is_string());
+
+    let active = body_json(
+        build_app(state.clone())
+            .oneshot(auth_get("/api/spaces", &token))
+            .await
+            .unwrap(),
+    )
+    .await;
+    let names: Vec<_> = active
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|s| s["name"].as_str().unwrap().to_string())
+        .collect();
+    assert_eq!(names, vec!["Keep".to_string()], "{active}");
+    assert_eq!(keep["archived_at"], serde_json::Value::Null);
+
+    let archived = body_json(
+        build_app(state.clone())
+            .oneshot(auth_get("/api/spaces/archived", &token))
+            .await
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(archived.as_array().unwrap().len(), 1, "{archived}");
+    assert_eq!(archived[0]["id"], gone_id.as_str());
+
+    let resp = build_app(state.clone())
+        .oneshot(auth_post_json(
+            &format!("/api/spaces/{gone_id}/unarchive"),
+            &token,
+            serde_json::json!({}),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let active = body_json(
+        build_app(state)
+            .oneshot(auth_get("/api/spaces", &token))
+            .await
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(active.as_array().unwrap().len(), 2, "{active}");
+}
+
+#[tokio::test]
+async fn another_user_cannot_archive_or_see_archived_spaces() {
+    let (state, _tmp) = test_app_state().await;
+    let (token_a, _) = register_user(&state, "arch-b1", "archb1@example.com", "password123").await;
+    let (token_b, _) = register_user(&state, "arch-b2", "archb2@example.com", "password123").await;
+    let space = create_space(&state, &token_a, "Mine").await;
+    let id = space["id"].as_str().unwrap();
+
+    let resp = build_app(state.clone())
+        .oneshot(auth_post_json(
+            &format!("/api/spaces/{id}/archive"),
+            &token_b,
+            serde_json::json!({}),
+        ))
+        .await
+        .unwrap();
+    assert!(
+        resp.status() == StatusCode::NOT_FOUND || resp.status() == StatusCode::FORBIDDEN,
+        "{}",
+        resp.status()
+    );
+
+    let resp = build_app(state)
+        .oneshot(auth_get("/api/spaces/archived", &token_b))
+        .await
+        .unwrap();
+    assert_eq!(body_json(resp).await.as_array().unwrap().len(), 0);
+}

@@ -535,7 +535,7 @@ export interface DelegationInfo {
   task_id: string;
   agent_id: string;
   agent_name: string | null;
-  status: "pending" | "inprogress" | "completed" | "failed" | "cancelled";
+  status: "pending" | "inprogress" | "waitingapproval" | "completed" | "failed" | "cancelled";
   chat_id: string | null;
   created_at: string;
 }

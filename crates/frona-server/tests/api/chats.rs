@@ -253,3 +253,94 @@ async fn archive_and_unarchive_chat() {
     let list = body_json(resp).await;
     assert!(list.as_array().unwrap().iter().any(|c| c["id"] == id));
 }
+
+#[tokio::test]
+async fn delegations_list_the_sub_tasks_a_chat_spawned_with_their_agent_and_status() {
+    use frona::agent::task::models::CreateTaskRequest;
+
+    let (state, _tmp) = test_app_state().await;
+    let (token, user_id) =
+        register_user(&state, "deleg-a", "delega@example.com", "password123").await;
+    let parent = create_agent(&state, &token, "Planner").await;
+    let child = create_agent(&state, &token, "Scout").await;
+    let parent_id = parent["id"].as_str().unwrap().to_string();
+    let child_id = child["id"].as_str().unwrap().to_string();
+    let chat = create_chat(&state, &token, &parent_id, Some("Plan")).await;
+    let chat_id = chat["id"].as_str().unwrap().to_string();
+
+    let task = state
+        .task_service
+        .create(
+            &user_id,
+            CreateTaskRequest {
+                agent_id: child_id.clone(),
+                space_id: None,
+                chat_id: None,
+                title: "Look it up".into(),
+                description: None,
+                source_agent_id: Some(parent_id.clone()),
+                source_chat_id: Some(chat_id.clone()),
+                resume_parent: None,
+                run_at: None,
+                quarantined: false,
+                result_schema: None,
+                result_description: None,
+            },
+        )
+        .await
+        .unwrap();
+
+    let resp = build_app(state.clone())
+        .oneshot(auth_get(
+            &format!("/api/chats/{chat_id}/delegations"),
+            &token,
+        ))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let json = body_json(resp).await;
+    let list = json.as_array().unwrap();
+    assert_eq!(list.len(), 1, "{json}");
+    assert_eq!(list[0]["task_id"], task.id.as_str());
+    assert_eq!(list[0]["agent_id"], child_id.as_str());
+    assert_eq!(list[0]["agent_name"], "Scout");
+    assert_eq!(list[0]["status"], "pending");
+
+    // A paused-for-approval delegate is reported as such.
+    state
+        .task_service
+        .mark_in_progress(&task.id, None)
+        .await
+        .unwrap();
+    state
+        .task_service
+        .mark_waiting_approval(&task.id)
+        .await
+        .unwrap();
+    let json = body_json(
+        build_app(state.clone())
+            .oneshot(auth_get(
+                &format!("/api/chats/{chat_id}/delegations"),
+                &token,
+            ))
+            .await
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(json[0]["status"], "waitingapproval");
+
+    // Someone else's chat is not theirs to inspect.
+    let (other, _) = register_user(&state, "deleg-b", "delegb@example.com", "password123").await;
+    let resp = build_app(state)
+        .oneshot(auth_get(
+            &format!("/api/chats/{chat_id}/delegations"),
+            &other,
+        ))
+        .await
+        .unwrap();
+    assert!(
+        resp.status() == StatusCode::NOT_FOUND || resp.status() == StatusCode::FORBIDDEN,
+        "{}",
+        resp.status()
+    );
+}

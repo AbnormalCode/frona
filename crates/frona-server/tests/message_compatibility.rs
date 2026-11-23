@@ -283,6 +283,7 @@ async fn memory_maintenance_consumes_a_chat_with_legacy_message_rows() {
             user_id: "user".into(),
             name: "Older chats".into(),
             metadata: Default::default(),
+            archived_at: None,
             created_at: now,
             updated_at: now,
         })

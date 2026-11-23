@@ -23,6 +23,7 @@ interface PendingMessage {
 
 const sessionStore = {
   activeTaskId: null as string | null,
+  activeChatId: null as string | null,
   pendingMessage: null as PendingMessage | null,
 };
 
@@ -52,7 +53,7 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
   const [activeChat, setActiveChat] = useState<ChatResponse | null>(null);
   const systemAgent = useSystemAgent();
   const agentId = activeChat?.agent_id ?? agentParam ?? systemAgent.id;
-  const { updateChatTitle, updateAgent, updateTaskInList, setActiveTab, standaloneChats, spaces, archivedChats } = useNavigation();
+  const { updateChatTitle, updateAgent, addChatById, updateTaskInList, setActiveTab, standaloneChats, spaces, archivedChats } = useNavigation();
   const { addNotification } = useNotifications();
 
   const [prevActiveChatId, setPrevActiveChatId] = useState(activeChatId);
@@ -87,6 +88,10 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
   useEffect(() => {
     sessionStore.activeTaskId = taskIdParam;
   }, [taskIdParam]);
+
+  useEffect(() => {
+    sessionStore.activeChatId = activeChatId;
+  }, [activeChatId]);
 
   useEffect(() => {
     if (taskIdParam) {
@@ -128,6 +133,25 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
         case "entity_updated":
           if (event.table === "agent") {
             updateAgent(event.recordId, event.fields);
+          } else if (event.table === "chat" && event.action === "created") {
+            // Chats the server creates on its own — an inbound call an agent
+            // answered, a message arriving on a channel — would otherwise
+            // show up in the sidebar only after a full reload.
+            addChatById(event.recordId);
+          } else if (
+            event.table === "chat" &&
+            event.action === "updated" &&
+            event.recordId === sessionStore.activeChatId
+          ) {
+            // Covers a live call transfer flipping this chat's agent_id
+            // (and anything else that changes it) while it's open — refetch
+            // so the header's shown agent updates without a reload. Uses
+            // sessionStore rather than the closed-over activeChatId: this
+            // handler is set up once on mount, so the destructured value
+            // would be stale on every navigation after the first.
+            api.get<ChatResponse>(`/api/chats/${event.recordId}`)
+              .then((chat) => setActiveChat(chat))
+              .catch(() => {});
           }
           break;
         case "task_update":
@@ -146,9 +170,25 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
         case "inference_count":
         case "activity_changed":
           break;
-        case "notification":
-          addNotification(event.notification);
+        case "notification": {
+          const notif = event.notification;
+          // Suppress the bell entry when the user is already actively viewing
+          // the chat it's for (window focused/visible). Mark it read server-
+          // side so it doesn't resurface as unread on reload, and skip adding
+          // it to the feed. Everything else (other chat, unfocused, non-Agent)
+          // still notifies.
+          const viewingActiveChat =
+            notif.data?.type === "Agent" &&
+            notif.data.chat_id === sessionStore.activeChatId &&
+            typeof document !== "undefined" &&
+            (document.visibilityState === "visible" || document.hasFocus());
+          if (viewingActiveChat) {
+            api.post(`/api/notifications/${notif.id}/read`, {}).catch(() => {});
+          } else {
+            addNotification(notif);
+          }
           break;
+        }
       }
     });
 
@@ -156,7 +196,7 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
       unsubscribe();
       controller.abort();
     };
-  }, [updateChatTitle, updateAgent, updateTaskInList, addNotification]);
+  }, [updateChatTitle, updateAgent, addChatById, updateTaskInList, addNotification]);
 
   const setPendingMessage = useCallback((message: string, attachments?: Attachment[]) => {
     sessionStore.pendingMessage = { content: message, attachments };

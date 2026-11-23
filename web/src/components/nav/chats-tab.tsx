@@ -31,6 +31,8 @@ export function ChatsTab() {
     archiveChat,
     unarchiveChat,
     deleteChat,
+    archiveSpace,
+    deleteSpace,
     setMobileNavOpen,
   } = useNavigation();
   const { activeChatId, activeChat, setActiveChat } = useSession();
@@ -134,6 +136,11 @@ export function ChatsTab() {
     }
   };
 
+  const handleArchiveSpace = async (spaceId: string) => {
+    await archiveSpace(spaceId);
+    if (activeSpaceId === spaceId) router.push("/chat");
+  };
+
   return (
     <div className="space-y-1 p-2">
       <div className="flex items-center justify-between px-2 pb-1">
@@ -203,6 +210,15 @@ export function ChatsTab() {
                 className="flex w-full items-center gap-2 px-3 py-1.5 text-sm text-text-secondary hover:bg-surface-secondary"
               >
                 <PencilIcon className="h-4 w-4" /> Rename
+              </button>
+              <button
+                onClick={() => {
+                  setSpaceMenu(null);
+                  handleArchiveSpace(space.id);
+                }}
+                className="flex w-full items-center gap-2 px-3 py-1.5 text-sm text-text-secondary hover:bg-surface-secondary"
+              >
+                <ArchiveBoxIcon className="h-4 w-4" /> Archive
               </button>
               <button
                 onClick={() => {
@@ -360,6 +376,14 @@ export function ChatsTab() {
         open={deleteTarget !== null}
         onCancel={() => setDeleteTarget(null)}
         onConfirm={handleDeleteConfirm}
+      />
+
+      <DeleteConfirmDialog
+        open={deleteSpaceTarget !== null}
+        onCancel={() => setDeleteSpaceTarget(null)}
+        onConfirm={handleDeleteSpace}
+        title="Delete space?"
+        message="This permanently deletes the space. Chats inside it are not deleted, but they will no longer be grouped."
       />
     </div>
   );

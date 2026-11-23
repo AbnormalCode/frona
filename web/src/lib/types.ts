@@ -158,6 +158,8 @@ export interface CreateSpaceRequest {
 export interface ChatResponse {
   id: string;
   space_id: string | null;
+  /** Set for the chat a task runs in; those aren't sidebar entries. */
+  task_id: string | null;
   agent_id: string;
   title: string | null;
   archived_at: string | null;
