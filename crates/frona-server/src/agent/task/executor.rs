@@ -464,6 +464,11 @@ impl TaskExecutor {
         agent_id: Option<&str>,
         tool_calls: &[crate::inference::tool_call::ToolCallResponse],
     ) {
+        // Only a human can answer these; a task paused on an external
+        // callback is still working and keeps its status.
+        if !has_pending_hitl(tool_calls) {
+            return;
+        }
         if let Err(e) = self
             .harness
             .task_service
@@ -727,11 +732,13 @@ impl TaskExecutor {
                             .await;
                         } else {
                             // Resumed after a restart while still waiting.
-                            let _ = self
-                                .harness
-                                .task_service
-                                .mark_waiting_approval(&task.id)
-                                .await;
+                            if has_pending_hitl(&tool_calls) {
+                                let _ = self
+                                    .harness
+                                    .task_service
+                                    .mark_waiting_approval(&task.id)
+                                    .await;
+                            }
                         }
                         // Exit cleanly. The HITL-resolve handler will respawn
                         // this task via `run_task` once the human resolves.
@@ -1097,11 +1104,13 @@ impl TaskExecutor {
                         self.waiting_for_approval(task, &chat_id, agent_id.as_deref(), &tool_calls)
                             .await;
                     } else {
-                        let _ = self
-                            .harness
-                            .task_service
-                            .mark_waiting_approval(&task.id)
-                            .await;
+                        if has_pending_hitl(&tool_calls) {
+                            let _ = self
+                                .harness
+                                .task_service
+                                .mark_waiting_approval(&task.id)
+                                .await;
+                        }
                     }
                     return Ok(());
                 }
@@ -1487,4 +1496,14 @@ mod tests {
         assert!(tools.contains(&"fail_task"));
         assert!(!tools.contains(&"defer_task"));
     }
+}
+
+/// Whether any of these tool calls is waiting on a human (as opposed to an
+/// external callback).
+fn has_pending_hitl(tool_calls: &[crate::inference::tool_call::ToolCallResponse]) -> bool {
+    tool_calls.iter().any(|tc| {
+        tc.hitl
+            .as_ref()
+            .is_some_and(|h| h.status == crate::inference::tool_call::ToolStatus::Pending)
+    })
 }

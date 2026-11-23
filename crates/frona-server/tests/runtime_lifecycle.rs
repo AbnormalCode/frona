@@ -1053,7 +1053,17 @@ async fn pending_results_survive_shutdown_and_recovery_until_explicit_readiness(
                 .await
                 .unwrap()
                 .unwrap();
-            assert_eq!(task.status, TaskStatus::InProgress);
+            // A human request flags the task as waiting; an external
+            // callback leaves it working.
+            assert_eq!(
+                task.status,
+                if callback {
+                    TaskStatus::InProgress
+                } else {
+                    TaskStatus::WaitingApproval
+                },
+                "{mode}"
+            );
             task.chat_id.unwrap()
         } else {
             let chat = create_chat(&runtime, &user.id, &agent.id).await.unwrap();
