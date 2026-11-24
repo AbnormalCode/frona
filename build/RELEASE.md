@@ -12,7 +12,7 @@ The application and published Rust libraries have independent release versions.
 Application releases do not bump library versions. Library version preparation
 does not bump the application version or build container images. Libraries can
 have different versions and release independently. `frona-ontologies` is published
-from its own repository and consumed as a registry dependency.
+from its own repository (this deployment uses the `Mpercy-Git/frona-ontologies` fork) and consumed as a git dependency pinned by revision in `crates/frona-pkm/Cargo.toml`.
 
 ## Application versioning
 

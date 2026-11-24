@@ -3720,8 +3720,7 @@ dependencies = [
 [[package]]
 name = "frona-ontologies"
 version = "0.1.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "557e9baa9aa524988864747bcd27bab24a073cb1e442dc8ad8b5b2d81fb8f5cd"
+source = "git+https://github.com/Mpercy-Git/frona-ontologies?rev=0bf0276508bd56a7177776ac97aedc78a7716ae0#0bf0276508bd56a7177776ac97aedc78a7716ae0"
 dependencies = [
  "anyhow",
  "flate2",
