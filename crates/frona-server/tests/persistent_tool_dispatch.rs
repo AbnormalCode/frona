@@ -76,6 +76,7 @@ async fn setup() -> (helpers::app_state::Fixture, InferenceContext, String) {
     };
     fixture.state.user_service.create(&user).await.unwrap();
     let agent = Agent {
+        private_memory: false,
         voice_id: None,
         id: "agent-1".into(),
         user_id: user.id.clone(),

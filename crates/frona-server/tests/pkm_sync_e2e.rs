@@ -586,6 +586,7 @@ async fn seed_user_and_system_agent(db: &Surreal<Db>) {
     SurrealRepo::<frona::agent::models::Agent>::new(db.clone())
         .create(&frona::agent::models::Agent {
             voice_id: None,
+            private_memory: false,
             id: "sys-agent".into(),
             user_id: U.into(),
             handle: frona::handle!("system"),

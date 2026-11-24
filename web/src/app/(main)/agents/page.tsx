@@ -87,6 +87,7 @@ import { VoiceSection } from "@/components/agents/configure/voice-section";
 import { SkillsSection } from "@/components/agents/configure/skills-section";
 import type { SkillBrowserHandle } from "@/components/skills/skill-browser";
 import { SandboxSection } from "@/components/agents/configure/sandbox-section";
+import { MemorySection } from "@/components/agents/configure/memory-section";
 import { CredsSection } from "@/components/agents/configure/creds-section";
 import { ShareSection } from "@/components/agents/configure/share-section";
 import { TriggersSection } from "@/components/agents/configure/triggers-section";
@@ -97,6 +98,7 @@ const SECTIONS = [
   { id: "prompt", label: "Prompt" },
   { id: "tools", label: "Tools" },
   { id: "skills", label: "Skills" },
+  { id: "memory", label: "Memory" },
   { id: "voice", label: "Voice" },
   { id: "sandbox", label: "Sandbox" },
   { id: "creds", label: "Credentials" },
@@ -310,6 +312,12 @@ function AgentSettings() {
                 sandbox={(patch.sandbox_form as SandboxFormShape | undefined) ?? fromAgent(merged)}
                 onChange={(v) => update({ sandbox_form: v })}
                 onValidChange={setSandboxValid}
+              />
+            )}
+            {activeSection === "memory" && (
+              <MemorySection
+                privateMemory={(merged.private_memory as boolean) ?? false}
+                onChange={update}
               />
             )}
             {activeSection === "creds" && <CredsSection principalKind="agent" principalId={agentId} />}

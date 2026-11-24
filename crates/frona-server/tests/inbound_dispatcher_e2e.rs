@@ -174,6 +174,7 @@ async fn seed_user_and_agent(state: &AppState, user_id: &str, agent_id: &str) {
 
     SurrealRepo::<Agent>::new(state.db.clone())
         .create(&Agent {
+            private_memory: false,
             voice_id: None,
             id: agent_id.into(),
             user_id: user_id.into(),

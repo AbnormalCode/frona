@@ -128,6 +128,7 @@ async fn setup_with_extra_tools(
 
 fn test_agent(id: &str) -> Agent {
     Agent {
+        private_memory: false,
         voice_id: None,
         id: id.to_string(),
         user_id: "user-1".into(),
@@ -1921,6 +1922,7 @@ mod decision_cache {
             .await
             .unwrap();
         let agent_u2 = Agent {
+            private_memory: false,
             user_id: "user-2".into(),
             ..test_agent("agent-1")
         };

@@ -188,6 +188,7 @@ async fn seed_agent(db: &Surreal<Db>) {
     let _ = SurrealRepo::<frona::agent::models::Agent>::new(db.clone())
         .create(&frona::agent::models::Agent {
             voice_id: None,
+            private_memory: false,
             id: "a1".into(),
             user_id: "u1".into(),
             handle: frona::handle!("assistant"),
@@ -360,7 +361,7 @@ async fn sweep_consolidates_an_idle_chat_once_and_persists_the_pass() {
     .await;
 
     let repo = PkmRepo::new(ctx.db.clone(), 8);
-    repo.remember("u1", &chat.id, "Postgres dev port is 5433")
+    repo.remember("u1", &chat.id, "Postgres dev port is 5433", None)
         .await
         .unwrap();
 

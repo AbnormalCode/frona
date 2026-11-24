@@ -224,6 +224,7 @@ async fn twilio_callback_uses_the_calling_agents_voice() {
     let (state, db, user, _tmp) = callback_test_fixture().await;
 
     let agent = Agent {
+        private_memory: false,
         id: "agent-with-voice".to_string(),
         user_id: user.id.clone(),
         handle: frona::handle!("specialist"),

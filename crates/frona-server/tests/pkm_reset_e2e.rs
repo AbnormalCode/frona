@@ -81,6 +81,7 @@ async fn seed_chat_sources(
     SurrealRepo::<frona::agent::models::Agent>::new(db.clone())
         .create(&frona::agent::models::Agent {
             voice_id: None,
+            private_memory: false,
             id: agent_id.clone(),
             user_id: user_id.into(),
             handle: frona::handle!("memory-agent"),
@@ -288,7 +289,7 @@ async fn reset_rebuilds_only_the_authenticated_users_memory_on_a_later_sweep() {
         .await
         .unwrap();
     seeded_repo
-        .remember(&user_id, &chat_id, "source")
+        .remember(&user_id, &chat_id, "source", None)
         .await
         .unwrap();
     seeded_repo
@@ -315,7 +316,7 @@ async fn reset_rebuilds_only_the_authenticated_users_memory_on_a_later_sweep() {
         .await
         .unwrap();
     seeded_repo
-        .remember(&other_user_id, "other-chat", "other source")
+        .remember(&other_user_id, "other-chat", "other source", None)
         .await
         .unwrap();
     db.query("UPDATE knowledge_short_memory SET validated = true WHERE user_id IN [$user, $other]")

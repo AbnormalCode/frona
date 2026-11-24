@@ -341,6 +341,7 @@ mod tests {
             },
             crate::agent::models::Agent {
                 voice_id: None,
+                private_memory: false,
                 id: "test-agent".into(),
                 user_id: "test-user".into(),
                 handle: crate::handle!("test-agent"),

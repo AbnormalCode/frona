@@ -161,6 +161,7 @@ async fn fixture_with_group(
     SurrealRepo::<Agent>::new(db.clone())
         .create(&Agent {
             voice_id: None,
+            private_memory: false,
             id: "a1".into(),
             user_id: "u1".into(),
             handle: crate::handle!("agent"),

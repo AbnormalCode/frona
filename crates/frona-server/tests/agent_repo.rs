@@ -69,6 +69,7 @@ async fn test_db() -> Surreal<Db> {
 fn test_agent(user_id: &str) -> Agent {
     let now = Utc::now();
     Agent {
+        private_memory: false,
         voice_id: None,
         id: frona::core::repository::new_id(),
         user_id: user_id.to_string(),
@@ -309,6 +310,7 @@ async fn agent_service_update_invalidates_cache() {
             sandbox_limits: None,
             prompt: None,
             identity: None,
+            private_memory: None,
         },
     )
     .await

@@ -179,6 +179,7 @@ async fn seed_user_and_agent(state: &AppState) {
     let repo = SurrealAgentRepo::new(state.db.clone());
     let _ = repo
         .create(&Agent {
+            private_memory: false,
             voice_id: None,
             id: "agent-1".into(),
             user_id: "user-1".into(),

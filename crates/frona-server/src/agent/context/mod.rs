@@ -26,6 +26,7 @@ pub enum AgentContextKind {
     ShortMemory,
     UserMemory,
     AgentMemory,
+    PrivateMemoryNote,
     SpaceContext,
     Skills,
     Agents,

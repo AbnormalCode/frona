@@ -169,6 +169,7 @@ async fn seed_user_and_two_agents(state: &AppState) -> (String, String) {
 
     let repo = SurrealAgentRepo::new(state.db.clone());
     let default_agent = Agent {
+        private_memory: false,
         voice_id: None,
         id: "agent-default".into(),
         user_id: "user-1".into(),
@@ -190,6 +191,7 @@ async fn seed_user_and_two_agents(state: &AppState) -> (String, String) {
         updated_at: now,
     };
     let target_agent = Agent {
+        private_memory: false,
         id: "agent-target".into(),
         handle: frona::handle!("target"),
         name: "Target".into(),

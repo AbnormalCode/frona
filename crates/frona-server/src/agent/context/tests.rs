@@ -53,6 +53,7 @@ pub(super) fn scope() -> AgentContextScope<'static> {
     static AGENT: std::sync::LazyLock<crate::agent::models::Agent> =
         std::sync::LazyLock::new(|| crate::agent::models::Agent {
             voice_id: None,
+            private_memory: false,
             id: "agent".into(),
             user_id: "user".into(),
             handle: crate::handle!("agent"),

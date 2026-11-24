@@ -223,6 +223,7 @@ async fn seed_agent(db: &Surreal<Db>) {
     let _ = SurrealRepo::<frona::agent::models::Agent>::new(db.clone())
         .create(&frona::agent::models::Agent {
             voice_id: None,
+            private_memory: false,
             id: "a1".into(),
             user_id: USER.into(),
             handle: frona::handle!("assistant"),

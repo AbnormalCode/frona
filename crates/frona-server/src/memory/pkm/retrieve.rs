@@ -35,11 +35,14 @@ impl PkmService {
             .unwrap_or_default())
     }
 
+    /// `agent_id` is the reading agent: it sees the user's shared rows plus its own
+    /// private ones (a private-memory agent's `memory_remember` writes the latter).
     async fn short_memory_block(
         &self,
         user_id: &str,
+        agent_id: &str,
     ) -> Result<Option<AgentContextSection>, AppError> {
-        let rows = self.repo.list_short_memory(user_id).await?;
+        let rows = self.repo.list_short_memory(user_id, Some(agent_id)).await?;
         if rows.is_empty() {
             return Ok(None);
         }
@@ -178,11 +181,24 @@ impl PkmService {
             "user_profile",
             profile.trim_end().into(),
         ));
-        if let Some(section) = self.short_memory_block(&user.id).await? {
+        if let Some(section) = self.short_memory_block(&user.id, &scope.agent.id).await? {
             sections.push(section);
         }
         if let Some(section) = self.playbook_index_block(&user.id, &vault).await? {
             sections.push(section);
+        }
+        // A private-memory agent's `memory_remember` writes only for itself and its
+        // chats never reach consolidation, so the guide's account of where its notes
+        // end up would otherwise be wrong.
+        if scope.agent.private_memory
+            && let Some(note) = self.prompts.try_read("pkm/private_section.md")?
+            && !note.trim().is_empty()
+        {
+            sections.push(AgentContextSection::prose(
+                AgentContextKind::PrivateMemoryNote,
+                "private_memory_note",
+                note.trim_end().to_string(),
+            ));
         }
         Ok(sections)
     }

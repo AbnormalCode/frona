@@ -213,6 +213,7 @@ fn make_task() -> Task {
 async fn seed_agent(db: &Surreal<Db>) {
     let agent = frona::agent::models::Agent {
         voice_id: None,
+        private_memory: false,
         id: "test-agent".to_string(),
         user_id: "user-1".to_string(),
         handle: frona::handle!("test-agent"),

@@ -573,6 +573,7 @@ mod tests {
         let _ = repo
             .create(&crate::agent::models::Agent {
                 voice_id: None,
+                private_memory: false,
                 id: "agent-1".into(),
                 user_id: "user-1".into(),
                 handle: crate::handle!("agent-1"),

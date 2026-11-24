@@ -1160,6 +1160,7 @@ impl From<portable::KnowledgeShortMemory> for KnowledgeShortMemory {
             last_accessed_at: value.last_accessed_at,
             source_chat_id: value.source_chat_id,
             validated: value.validated,
+            agent_id: None,
         }
     }
 }

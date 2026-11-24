@@ -182,7 +182,7 @@ impl Cleanup {
         let rows = self
             .ctx
             .repo
-            .list_short_memory(&self.ctx.scope.user_id)
+            .list_short_memory(&self.ctx.scope.user_id, None)
             .await?;
         let now = Utc::now();
         for row in rows {

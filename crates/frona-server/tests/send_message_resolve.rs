@@ -59,6 +59,7 @@ fn test_task(id: &str, user_id: &str, agent_id: &str, kind: TaskKind) -> Task {
 fn test_agent(id: &str, user_id: &str, heartbeat_chat_id: Option<&str>) -> Agent {
     let now = Utc::now();
     Agent {
+        private_memory: false,
         voice_id: None,
         id: id.to_string(),
         user_id: user_id.to_string(),

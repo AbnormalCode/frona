@@ -670,6 +670,7 @@ pub fn mock_context() -> InferenceContext {
         },
         frona::agent::models::Agent {
             voice_id: None,
+            private_memory: false,
             id: "test-agent".into(),
             user_id: "test-user".into(),
             handle: frona::handle!("test-agent"),

@@ -512,6 +512,14 @@ impl BasicMemoryService {
             }
             let mut summaries = Vec::new();
             for chat in &chats {
+                // Space memory is read by every agent that shares the space, so a
+                // private-memory agent's conversations must not be summarised into
+                // it. A chat whose agent is gone is summarised as before.
+                if let Ok(Some(agent)) = agent_service.find_by_id(&chat.agent_id).await
+                    && agent.private_memory
+                {
+                    continue;
+                }
                 let title = chat.title.clone().unwrap_or_else(|| "Untitled".to_string());
                 let summary = chat_service
                     .compactor()
@@ -520,6 +528,9 @@ impl BasicMemoryService {
                     .summary
                     .unwrap_or_else(|| format!("(No summary available for chat: {title})"));
                 summaries.push((title, summary));
+            }
+            if summaries.is_empty() {
+                continue;
             }
             let result = async {
                 let group = self
@@ -611,6 +622,18 @@ impl MemoryService for BasicMemoryService {
             if !values.is_empty() {
                 sections.push(Section::tagged(kind, tag, values));
             }
+        }
+        // A private-memory agent has no `store_user_memory` tool; say so, or the
+        // usage guide reads as an instruction to call something it cannot see.
+        if scope.agent.private_memory
+            && let Some(note) = self.prompts.try_read("MEMORY_PRIVATE.md")?
+            && !note.trim().is_empty()
+        {
+            sections.push(Section::prose(
+                Kind::PrivateMemoryNote,
+                "private_memory_note",
+                note.trim_end().to_string(),
+            ));
         }
         Ok(sections)
     }

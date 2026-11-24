@@ -135,6 +135,7 @@ async fn seed_agent_and_chat(db: &Surreal<Db>) {
     SurrealRepo::<frona::agent::models::Agent>::new(db.clone())
         .create(&frona::agent::models::Agent {
             voice_id: None,
+            private_memory: false,
             id: "test-agent".into(),
             user_id: "test-user".into(),
             handle: frona::handle!("assistant"),
@@ -394,7 +395,10 @@ async fn service_pipeline_consolidates_searches_reads_and_cites_entities_and_pla
         .await
         .unwrap();
     assert_eq!(
-        repo.list_short_memory("test-user").await.unwrap().len(),
+        repo.list_short_memory("test-user", None)
+            .await
+            .unwrap()
+            .len(),
         1,
         "memory_remember wrote a short memory"
     );
@@ -1123,7 +1127,7 @@ async fn checkpoint_commit_consumes_short_memory_advances_watermark_and_selects_
     let repo = PkmRepo::new(db.clone(), 8);
 
     // Short memory: create → unconsolidated → mark validated → gone from the queue.
-    repo.remember("u", "c1", "Postgres port is 5433")
+    repo.remember("u", "c1", "Postgres port is 5433", None)
         .await
         .unwrap();
     let sm = repo.unconsolidated_short_memories("c1").await.unwrap();

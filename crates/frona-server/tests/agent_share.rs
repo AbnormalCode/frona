@@ -63,6 +63,7 @@ async fn test_db() -> Surreal<Db> {
 async fn seed_agent(db: &Surreal<Db>, owner_id: &str) -> Agent {
     let now = Utc::now();
     let agent = Agent {
+        private_memory: false,
         voice_id: None,
         id: frona::core::repository::new_id(),
         user_id: owner_id.to_string(),

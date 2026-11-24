@@ -113,6 +113,7 @@ async fn seed_user_and_agent(state: &AppState) {
     let _ = repo
         .create(&frona::agent::models::Agent {
             voice_id: None,
+            private_memory: false,
             id: "agent-1".into(),
             user_id: "user-1".into(),
             handle: frona::handle!("agent-1"),

@@ -38,6 +38,21 @@ pub struct Agent {
     #[serde(default)]
     #[surreal(default)]
     pub identity: BTreeMap<String, String>,
+    /// Keep this agent's memory to itself. When set, the agent never writes to
+    /// any user-scoped memory the user's other agents can read - shared user
+    /// memory, space summaries, and the PKM knowledge base are all off-limits -
+    /// and what it does remember is scoped to the agent. It still *reads* what
+    /// the user has chosen to remember.
+    ///
+    /// Agent rows are read back through `SurrealValue`, not serde, so
+    /// `#[serde(default)]` alone left every row written before this field
+    /// existed unreadable (`Expected bool, got none`). Both defaults are needed:
+    /// the `surreal` one is what the database path reads. The
+    /// `backfill_agent_private_memory` migration writes the value in as well, so
+    /// queries that filter on it see the same thing the struct does.
+    #[serde(default)]
+    #[surreal(default)]
+    pub private_memory: bool,
     #[serde(default)]
     pub prompt: Option<String>,
     pub heartbeat_interval: Option<u64>,
@@ -63,6 +78,9 @@ pub struct CreateAgentRequest {
     pub sandbox_limits: Option<SandboxLimits>,
     #[serde(default)]
     pub voice_id: Option<String>,
+    /// Omitted → not private. See [`Agent::private_memory`].
+    #[serde(default)]
+    pub private_memory: Option<bool>,
 }
 
 #[derive(Debug, Default, Deserialize, bon::Builder)]
@@ -85,6 +103,10 @@ pub struct UpdateAgentRequest {
     /// blank-clears convention as `set_inbound_agent`/`set_inbound_greeting`.
     #[serde(default)]
     pub voice_id: Option<String>,
+    /// `None` (key omitted) leaves the setting untouched. See
+    /// [`Agent::private_memory`].
+    #[serde(default)]
+    pub private_memory: Option<bool>,
 }
 
 #[derive(Debug, Serialize)]
@@ -109,6 +131,8 @@ pub struct AgentResponse {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub avatar_url: Option<String>,
     pub identity: BTreeMap<String, String>,
+    /// See [`Agent::private_memory`].
+    pub private_memory: bool,
     pub voice_id: Option<String>,
     pub prompt: Option<String>,
     pub default_prompt: String,
@@ -161,6 +185,7 @@ impl AgentResponse {
             sandbox_limits: agent.sandbox_limits,
             avatar_url: None,
             identity: agent.identity,
+            private_memory: agent.private_memory,
             prompt: agent.prompt,
             default_prompt: String::new(),
             is_builtin,

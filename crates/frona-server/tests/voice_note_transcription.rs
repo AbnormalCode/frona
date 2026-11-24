@@ -40,6 +40,7 @@ async fn seed_agent(
 ) {
     SurrealRepo::<frona::agent::models::Agent>::new(db.clone())
         .create(&frona::agent::models::Agent {
+            private_memory: false,
             id: agent_id.into(),
             user_id: user_id.into(),
             handle: frona::core::Handle::try_new(agent_id).unwrap(),
