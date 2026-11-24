@@ -63,11 +63,15 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
+      - name: Resolve image name
+        id: image
+        run: echo "name=ghcr.io/${GITHUB_REPOSITORY,,}" >> "$GITHUB_OUTPUT"
+
       - name: Docker metadata
         id: meta
         uses: docker/metadata-action@v5
         with:
-          images: ghcr.io/mpercy-git/frona
+          images: ${{ steps.image.outputs.name }}
           tags: |
             type=raw,value=${{ steps.tag.outputs.name }}
             type=raw,value=latest,enable=${{ steps.check.outputs.is-prerelease == 'false' }}
@@ -114,13 +118,15 @@ jobs:
       - name: Update docker-compose image tag
         run: |
           TAG="${{ needs.docker.outputs.tag }}"
-          sed -i "s|image: ghcr.io/mpercy-git/frona:.*|image: ghcr.io/mpercy-git/frona:${TAG}|" \
+          IMAGE="ghcr.io/${GITHUB_REPOSITORY,,}"
+          sed -i "s|image: ghcr.io/[^/]*/frona:.*|image: ${IMAGE}:${TAG}|" \
             examples/docker-compose/docker-compose.yml
 
       - name: Update Kubernetes deployment image tag
         run: |
           TAG="${{ needs.docker.outputs.tag }}"
-          sed -i "s|image: ghcr.io/mpercy-git/frona:.*|image: ghcr.io/mpercy-git/frona:${TAG}|" \
+          IMAGE="ghcr.io/${GITHUB_REPOSITORY,,}"
+          sed -i "s|image: ghcr.io/[^/]*/frona:.*|image: ${IMAGE}:${TAG}|" \
             examples/kubernetes/frona-deployment.yaml
 
       - name: Commit and push updated examples
