@@ -15,3 +15,16 @@ export const CredentialToolUI = makeAssistantToolUI<{ prompt: string; url: strin
     />
   ),
 });
+
+export const CredentialsToolUI = makeAssistantToolUI<{ prompt: string; url: string; status: string; items?: { query: string; label?: string | null }[]; reason: string }, string>({
+  toolName: "Credentials",
+  render: ({ args, result, toolCallId }) => (
+    <ToolStatusLine
+      toolCallId={toolCallId}
+      pendingIcon={toolPendingIcon("Credentials")}
+      label={`Credentials: ${(args.items ?? []).map((i) => i.label ?? i.query).join(", ")}`}
+      serverStatus={args.status}
+      serverAnswer={args.status === "resolved" ? "Granted" : result ?? null}
+    />
+  ),
+});

@@ -259,6 +259,7 @@ export type HitlRequest =
   | { type: "Takeover"; data: { reason: string; debugger_url: string } }
   | { type: "App"; data: { action: string; manifest: Record<string, unknown>; previous_manifest: Record<string, unknown> | null } }
   | { type: "Credential"; data: { query: string; reason: string } }
+  | { type: "Credentials"; data: { items: { query: string; label?: string | null }[]; reason: string } }
   | { type: "Skills"; data: { items: SkillCandidate[]; scope: SkillInstallScope; reason: string } };
 
 export type VaultField =
@@ -276,8 +277,23 @@ export type GrantDuration =
   | { hours: number }
   | { days: number };
 
+export interface VaultItemGrant {
+  query: string;
+  connection_id: string;
+  vault_item_id: string;
+  grant_duration: GrantDuration;
+  target: CredentialTarget;
+}
+
+/** A slot of a batched credential request the user chose not to fill. */
+export interface SkippedCredential {
+  query: string;
+  reason?: string | null;
+}
+
 export type VaultGrant =
   | { type: "Granted"; data: { connection_id: string; vault_item_id: string; grant_duration: GrantDuration; target: CredentialTarget } }
+  | { type: "GrantedMany"; data: { grants: VaultItemGrant[]; skipped: SkippedCredential[] } }
   | { type: "Denied" };
 
 export type HitlResponse =

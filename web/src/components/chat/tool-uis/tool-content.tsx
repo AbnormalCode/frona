@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useId } from "react";
+import { useState, useEffect, useId, useRef } from "react";
 import { api } from "@/lib/api-client";
 import { VaultItemPicker, type CredentialOption, type PickerConnection } from "@/components/vault-item-picker";
 import type { CredentialTarget, GrantDuration, HitlResponse, SkillCandidate, ToolCall, VaultField } from "@/lib/types";
@@ -85,11 +85,16 @@ function defaultPrefix(query: string): string {
   return query.toUpperCase().replace(/[^A-Z0-9]+/g, "_").replace(/^_+|_+$/g, "");
 }
 
-export function CredentialContent({ te, onResolve }: ToolContentProps) {
-  const hitl = te.hitl;
-  const queryStr = hitl?.request.type === "Credential" ? hitl.request.data.query : "";
-  const reasonStr = hitl?.request.type === "Credential" ? hitl.request.data.reason : "";
+export interface SlotGrant {
+  connection_id: string;
+  vault_item_id: string;
+  grant_duration: GrantDuration;
+  target: CredentialTarget;
+}
 
+/** One credential's picker: vault item, what to bind, how long. Reports the
+ *  grant to `onGrantChange` whenever it becomes (in)complete. */
+function CredentialSlotForm({ query, onGrantChange }: { query: string; onGrantChange: (grant: SlotGrant | null) => void }) {
   const [connections, setConnections] = useState<PickerConnection[]>([]);
   const [selection, setSelection] = useState<CredentialOption | null>(null);
   const [loadingConnections, setLoadingConnections] = useState(true);
@@ -97,7 +102,7 @@ export function CredentialContent({ te, onResolve }: ToolContentProps) {
   const [connectionVersion, setConnectionVersion] = useState(0);
   const [duration, setDuration] = useState<GrantDuration>("once");
   const [bindingMode, setBindingMode] = useState<"prefix" | "single">("prefix");
-  const [envVarPrefix, setEnvVarPrefix] = useState(defaultPrefix(queryStr));
+  const [envVarPrefix, setEnvVarPrefix] = useState(defaultPrefix(query));
   const [envVar, setEnvVar] = useState<string | null>(null);
   const [fields, setFields] = useState<string[]>([]);
   const [selectedField, setSelectedField] = useState("");
@@ -137,8 +142,6 @@ export function CredentialContent({ te, onResolve }: ToolContentProps) {
     return () => controller.abort();
   }, [connectionVersion]);
 
-  if (!hitl || hitl.request.type !== "Credential") return null;
-
   const prefix = envVarPrefix.trim();
   const variableName = envVar ?? (selectedField ? `${prefix ? `${prefix}_` : ""}${selectedField}` : "");
   const fieldsReady = !!selection && !loadingFields && !fieldError && fields.length > 0;
@@ -158,35 +161,20 @@ export function CredentialContent({ te, onResolve }: ToolContentProps) {
 
   const target = buildTarget();
 
-  const handleApprove = () => {
-    if (!selection || !target || !fieldsReady) return;
-    onResolve(
-      {
-        type: "Vault",
-        data: {
-          type: "Granted",
-          data: {
-            connection_id: selection.connection_id,
-            vault_item_id: selection.id,
-            grant_duration: duration,
-            target,
-          },
-        },
-      },
-      "Approved",
-    );
-  };
-
-  const handleDeny = () => {
-    onResolve({ type: "Vault", data: { type: "Denied" } }, "Denied");
-  };
-
   const durationValue = typeof duration === "string" ? duration : "hours" in duration ? "hours" : "days";
+
+  const grant: SlotGrant | null = selection && target && fieldsReady
+    ? { connection_id: selection.connection_id, vault_item_id: selection.id, grant_duration: duration, target }
+    : null;
+  const grantKey = grant ? JSON.stringify(grant) : "";
+  const onGrantChangeRef = useRef(onGrantChange);
+  onGrantChangeRef.current = onGrantChange;
+  useEffect(() => {
+    onGrantChangeRef.current(grantKey ? (JSON.parse(grantKey) as SlotGrant) : null);
+  }, [grantKey]);
 
   return (
     <div className="space-y-3">
-      <p className="text-sm text-text-tertiary">{reasonStr}</p>
-
       {loadingConnections ? (
         <p role="status" className="text-xs text-text-tertiary">Loading vaults...</p>
       ) : connectionError ? (
@@ -204,9 +192,9 @@ export function CredentialContent({ te, onResolve }: ToolContentProps) {
             setSelectedField("");
             setLoadingFields(!!item);
             setFieldVersion((version) => version + 1);
-            if (item && !envVarPrefix) setEnvVarPrefix(defaultPrefix(queryStr) || defaultPrefix(item.name) || "CREDENTIAL");
+            if (item && !envVarPrefix) setEnvVarPrefix(defaultPrefix(query) || defaultPrefix(item.name) || "CREDENTIAL");
           }}
-          initialQuery={queryStr}
+          initialQuery={query}
         />
       )}
 
@@ -312,8 +300,108 @@ export function CredentialContent({ te, onResolve }: ToolContentProps) {
           <option value="permanent">Allow permanently</option>
         </select>
       </div>
+    </div>
+  );
+}
 
-      <ApprovalButtons loading={false} onApprove={handleApprove} onDeny={handleDeny} approveDisabled={!fieldsReady || !target} />
+export function CredentialContent({ te, onResolve }: ToolContentProps) {
+  const hitl = te.hitl;
+  const [grant, setGrant] = useState<SlotGrant | null>(null);
+  if (!hitl || hitl.request.type !== "Credential") return null;
+  const { query, reason } = hitl.request.data;
+
+  return (
+    <div className="space-y-3">
+      <p className="text-sm text-text-tertiary">{reason}</p>
+      <CredentialSlotForm query={query} onGrantChange={setGrant} />
+      <ApprovalButtons
+        loading={false}
+        onApprove={() => grant && onResolve({ type: "Vault", data: { type: "Granted", data: grant } }, "Approved")}
+        onDeny={() => onResolve({ type: "Vault", data: { type: "Denied" } }, "Denied")}
+        approveDisabled={!grant}
+      />
+    </div>
+  );
+}
+
+type SlotState = { skipped: boolean; skipReason: string; grant: SlotGrant | null };
+
+/** Batched request: every slot is filled or skipped (optionally with a reason
+ *  the agent will read). Skipping all of them is allowed. */
+export function CredentialsContent({ te, onResolve }: ToolContentProps) {
+  const hitl = te.hitl;
+  const items = hitl?.request.type === "Credentials" ? hitl.request.data.items : [];
+  const [slots, setSlots] = useState<Record<string, SlotState>>({});
+  if (!hitl || hitl.request.type !== "Credentials") return null;
+  const { reason } = hitl.request.data;
+
+  const slot = (query: string): SlotState => slots[query] ?? { skipped: false, skipReason: "", grant: null };
+  const patch = (query: string, next: Partial<SlotState>) =>
+    setSlots((prev) => ({ ...prev, [query]: { ...(prev[query] ?? { skipped: false, skipReason: "", grant: null }), ...next } }));
+
+  const ready = items.every((item) => {
+    const state = slot(item.query);
+    return state.skipped || state.grant;
+  });
+
+  const handleApprove = () => {
+    const grants: Array<SlotGrant & { query: string }> = [];
+    const skipped: Array<{ query: string; reason?: string }> = [];
+    for (const item of items) {
+      const state = slot(item.query);
+      if (state.skipped) {
+        const why = state.skipReason.trim();
+        skipped.push(why ? { query: item.query, reason: why } : { query: item.query });
+      } else if (state.grant) {
+        grants.push({ query: item.query, ...state.grant });
+      }
+    }
+    const label = grants.length === 0 ? "Skipped all" : skipped.length ? `Approved ${grants.length}, skipped ${skipped.length}` : "Approved";
+    onResolve({ type: "Vault", data: { type: "GrantedMany", data: { grants, skipped } } }, label);
+  };
+
+  return (
+    <div className="space-y-4">
+      <p className="text-sm text-text-tertiary">{reason}</p>
+      {items.map((item) => {
+        const state = slot(item.query);
+        const title = item.label ?? item.query;
+        return (
+          <section key={item.query} aria-label={title} className="space-y-2 rounded-lg border border-border p-3">
+            <div className="flex items-center justify-between gap-2">
+              <h4 className="text-sm font-medium text-text-primary">{title}</h4>
+              <button
+                type="button"
+                aria-label={state.skipped ? `Provide ${title}` : `Skip ${title}`}
+                onClick={() => patch(item.query, { skipped: !state.skipped })}
+                className="text-xs text-text-secondary underline"
+              >
+                {state.skipped ? "Provide instead" : "Skip"}
+              </button>
+            </div>
+            {state.skipped ? (
+              <div className="space-y-1">
+                <label className="block text-xs font-medium text-text-tertiary">Reason (optional, the agent will see it)</label>
+                <input
+                  aria-label={`Reason for skipping ${title}`}
+                  value={state.skipReason}
+                  onChange={(e) => patch(item.query, { skipReason: e.target.value })}
+                  placeholder="e.g. I don't have one yet"
+                  className="w-full rounded-lg border border-border bg-surface px-3 py-2 text-sm text-text-primary placeholder:text-text-tertiary"
+                />
+              </div>
+            ) : (
+              <CredentialSlotForm query={item.query} onGrantChange={(grant) => patch(item.query, { grant })} />
+            )}
+          </section>
+        );
+      })}
+      <ApprovalButtons
+        loading={false}
+        onApprove={handleApprove}
+        onDeny={() => onResolve({ type: "Vault", data: { type: "Denied" } }, "Denied")}
+        approveDisabled={!ready}
+      />
     </div>
   );
 }
@@ -414,6 +502,8 @@ export function ToolContentDispatch(props: ToolContentProps & { selectedAnswer?:
       return <TakeoverContent {...props} />;
     case "Credential":
       return <CredentialContent {...props} />;
+    case "Credentials":
+      return <CredentialsContent {...props} />;
     case "App":
       return <AppContent {...props} />;
     case "Skills":

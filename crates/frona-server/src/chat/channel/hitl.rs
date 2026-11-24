@@ -143,7 +143,7 @@ pub fn kind_for(req: &HitlRequest) -> HitlKind {
             options: vec!["Done".to_string()],
         },
         HitlRequest::App { .. } => HitlKind::Approval,
-        HitlRequest::Credential { .. } => HitlKind::External,
+        HitlRequest::Credential { .. } | HitlRequest::Credentials { .. } => HitlKind::External,
         HitlRequest::Skills { .. } => HitlKind::Approval,
     }
 }
@@ -313,6 +313,13 @@ pub fn response_display(response: &HitlResponse) -> String {
         HitlResponse::Approval(false) => "❌ No".to_string(),
         HitlResponse::Choice(text) => text.clone(),
         HitlResponse::Vault(VaultGrant::Granted { .. }) => "🔑 Granted".to_string(),
+        HitlResponse::Vault(VaultGrant::GrantedMany { grants, skipped }) => {
+            match (grants.len(), skipped.len()) {
+                (_, 0) => format!("🔑 Granted {}", grants.len()),
+                (0, n) => format!("⏭ Skipped {n}"),
+                (g, n) => format!("🔑 Granted {g}, skipped {n}"),
+            }
+        }
         HitlResponse::Vault(VaultGrant::Denied) => "🚫 Denied".to_string(),
     }
 }
@@ -434,5 +441,42 @@ mod tests {
         for s in ["maybe", "yes please", "no problem", "i guess", ""] {
             assert_eq!(parse_yes_no(s), None, "expected None for {s:?}");
         }
+    }
+
+    #[test]
+    fn response_display_summarises_a_batched_grant() {
+        use crate::inference::hitl::{SkippedCredential, VaultItemGrant};
+        let skip = |q: &str| SkippedCredential {
+            query: q.into(),
+            reason: None,
+        };
+        let grant = |q: &str| VaultItemGrant {
+            query: q.into(),
+            connection_id: "c".into(),
+            vault_item_id: "i".into(),
+            grant_duration: crate::credential::vault::models::GrantDuration::Once,
+            target: crate::credential::vault::models::CredentialTarget::Prefix {
+                env_var_prefix: "P".into(),
+            },
+        };
+        let show = |grants, skipped| {
+            response_display(&HitlResponse::Vault(VaultGrant::GrantedMany {
+                grants,
+                skipped,
+            }))
+        };
+        assert_eq!(show(vec![grant("a"), grant("b")], vec![]), "🔑 Granted 2");
+        assert_eq!(show(vec![], vec![skip("a")]), "⏭ Skipped 1");
+        assert_eq!(
+            show(vec![grant("a")], vec![skip("b")]),
+            "🔑 Granted 1, skipped 1"
+        );
+        assert!(matches!(
+            kind_for(&HitlRequest::Credentials {
+                items: vec![],
+                reason: String::new()
+            }),
+            HitlKind::External
+        ));
     }
 }

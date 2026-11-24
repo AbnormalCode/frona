@@ -48,6 +48,14 @@ pub enum HitlRequest {
         query: String,
         reason: String,
     },
+    /// Batched credential request: the agent needs several secrets at once
+    /// (e.g. an app key *and* a user key). Rendered as a single approval with
+    /// one slot per item, each of which the user can fill or skip (with a
+    /// reason the agent gets to read).
+    Credentials {
+        items: Vec<CredentialRequest>,
+        reason: String,
+    },
     /// The agent found skills in the registry that aren't installed and wants
     /// to add them. Nothing is written until the user approves — the install
     /// happens in `add_skill`'s `on_resume`, mirroring the vault flow where
@@ -70,6 +78,17 @@ pub struct SkillCandidate {
     pub repo: String,
     #[serde(default)]
     pub description: String,
+}
+
+/// One secret in a batched [`HitlRequest::Credentials`]. `label` is an optional
+/// human hint shown beside the slot so a user filling several at once can tell
+/// them apart (e.g. "App key" vs "User key").
+#[derive(Debug, Clone, Serialize, Deserialize, SurrealValue)]
+#[surreal(crate = "surrealdb::types")]
+pub struct CredentialRequest {
+    pub query: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub label: Option<String>,
 }
 
 /// Where an approved skill lands. `Agent` writes into the agent's own
@@ -113,7 +132,39 @@ pub enum VaultGrant {
         grant_duration: GrantDuration,
         target: crate::credential::vault::models::CredentialTarget,
     },
+    /// Resolution for a batched [`HitlRequest::Credentials`]: one grant per slot
+    /// the user filled and one entry per slot they skipped. Skipping every slot
+    /// is allowed (the agent is told why); a single `Denied` still refuses the
+    /// whole batch.
+    GrantedMany {
+        grants: Vec<VaultItemGrant>,
+        #[serde(default)]
+        skipped: Vec<SkippedCredential>,
+    },
     Denied,
+}
+
+/// One resolved item of a [`VaultGrant::GrantedMany`], tying a requested
+/// `query` to the vault item and binding the user chose for it.
+#[derive(Debug, Clone, Serialize, Deserialize, SurrealValue)]
+#[surreal(crate = "surrealdb::types")]
+pub struct VaultItemGrant {
+    pub query: String,
+    pub connection_id: String,
+    pub vault_item_id: String,
+    pub grant_duration: GrantDuration,
+    pub target: crate::credential::vault::models::CredentialTarget,
+}
+
+/// A slot of a batched credential request the user chose not to fill. The
+/// optional `reason` is relayed to the agent so it can adapt instead of asking
+/// again.
+#[derive(Debug, Clone, Serialize, Deserialize, SurrealValue)]
+#[surreal(crate = "surrealdb::types")]
+pub struct SkippedCredential {
+    pub query: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reason: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, SurrealValue)]
@@ -216,6 +267,40 @@ mod tests {
             }
             _ => panic!("wrong variant"),
         }
+    }
+
+    #[test]
+    fn granted_many_round_trips_skips_and_tolerates_a_missing_skipped_list() {
+        let r = HitlResponse::Vault(VaultGrant::GrantedMany {
+            grants: vec![],
+            skipped: vec![
+                SkippedCredential {
+                    query: "a".into(),
+                    reason: Some("nope".into()),
+                },
+                SkippedCredential {
+                    query: "b".into(),
+                    reason: None,
+                },
+            ],
+        });
+        let json = serde_json::to_string(&r).unwrap();
+        let HitlResponse::Vault(VaultGrant::GrantedMany { skipped, .. }) =
+            serde_json::from_str(&json).unwrap()
+        else {
+            panic!("wrong variant");
+        };
+        assert_eq!(skipped[0].reason.as_deref(), Some("nope"));
+        assert_eq!(skipped[1].reason, None);
+
+        // A client that sends only grants is still valid.
+        let HitlResponse::Vault(VaultGrant::GrantedMany { skipped, .. }) = serde_json::from_str(
+            r#"{"type":"Vault","data":{"type":"GrantedMany","data":{"grants":[]}}}"#,
+        )
+        .unwrap() else {
+            panic!("wrong variant");
+        };
+        assert!(skipped.is_empty());
     }
 
     #[test]

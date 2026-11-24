@@ -193,6 +193,74 @@ async fn vault_granted_response_round_trips() {
 }
 
 #[tokio::test]
+async fn batched_credentials_with_skipped_slots_round_trip() {
+    use frona::inference::hitl::{CredentialRequest, SkippedCredential, VaultItemGrant};
+
+    let db = test_db().await;
+    let repo: SurrealRepo<ToolCall> = SurrealRepo::new(db);
+
+    let mut te = base_tool_call("request_credentials");
+    te.hitl = Some(Hitl {
+        prompt: "Allow two?".into(),
+        url: "https://x/chats/c1".into(),
+        request: HitlRequest::Credentials {
+            items: vec![
+                CredentialRequest {
+                    query: "app key".into(),
+                    label: Some("App key".into()),
+                },
+                CredentialRequest {
+                    query: "user key".into(),
+                    label: None,
+                },
+            ],
+            reason: "Weather API".into(),
+        },
+        status: ToolStatus::Resolved,
+        response: Some(HitlResponse::Vault(VaultGrant::GrantedMany {
+            grants: vec![VaultItemGrant {
+                query: "app key".into(),
+                connection_id: "conn-1".into(),
+                vault_item_id: "item-1".into(),
+                grant_duration: GrantDuration::Once,
+                target: CredentialTarget::Prefix {
+                    env_var_prefix: "APP".into(),
+                },
+            }],
+            skipped: vec![SkippedCredential {
+                query: "user key".into(),
+                reason: Some("don't have one".into()),
+            }],
+        })),
+        delivery: None,
+    });
+
+    let id = te.id.clone();
+    repo.create(&te).await.unwrap();
+    let found = repo.find_by_id(&id).await.unwrap().expect("should find");
+    let h = found.hitl.expect("hitl should round-trip");
+    match h.request {
+        HitlRequest::Credentials { items, reason } => {
+            assert_eq!(reason, "Weather API");
+            assert_eq!(items.len(), 2);
+            assert_eq!(items[0].label.as_deref(), Some("App key"));
+            assert_eq!(items[1].label, None);
+        }
+        _ => panic!("expected Credentials"),
+    }
+    match h.response.expect("response should be set") {
+        HitlResponse::Vault(VaultGrant::GrantedMany { grants, skipped }) => {
+            assert_eq!(grants.len(), 1);
+            assert_eq!(grants[0].query, "app key");
+            assert_eq!(skipped.len(), 1);
+            assert_eq!(skipped[0].query, "user key");
+            assert_eq!(skipped[0].reason.as_deref(), Some("don't have one"));
+        }
+        _ => panic!("expected GrantedMany"),
+    }
+}
+
+#[tokio::test]
 async fn task_event_completion_round_trips() {
     use frona::agent::task::models::TaskStatus;
 

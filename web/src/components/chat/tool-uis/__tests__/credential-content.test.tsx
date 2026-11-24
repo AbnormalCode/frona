@@ -1,8 +1,8 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { api } from "@/lib/api-client";
 import type { ToolCall } from "@/lib/types";
-import { CredentialContent } from "../tool-content";
+import { CredentialContent, CredentialsContent } from "../tool-content";
 
 vi.mock("@/lib/api-client", () => ({ api: { get: vi.fn() } }));
 
@@ -106,5 +106,71 @@ describe("chat credential picker", () => {
     expect(await screen.findByRole("button", { name: "Database, Work vault" })).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Decline" }));
     expect(onResolve).toHaveBeenCalledWith({ type: "Vault", data: { type: "Denied" } }, "Denied");
+  });
+});
+
+describe("batched credential request", () => {
+  const batch = {
+    hitl: {
+      prompt: "Two keys", url: "", status: "pending", response: null, delivery: null,
+      request: { type: "Credentials", data: {
+        reason: "Call the weather API",
+        items: [{ query: "app key", label: "App key" }, { query: "user key", label: "User key" }],
+      } },
+    },
+  } as ToolCall;
+
+  beforeEach(() => {
+    vi.resetAllMocks();
+    vi.mocked(api.get).mockImplementation(async (path) => {
+      if (path === "/api/vaults") return [{ id: "local", name: "Local vault", provider: "local", enabled: true }];
+      if (path.endsWith("/fields")) return ["PASSWORD"];
+      return [{ id: "item-1", name: "Key", username: null }];
+    });
+  });
+
+  it("grants one slot, skips the other with a reason, and sends both", async () => {
+    const onResolve = vi.fn();
+    render(<CredentialsContent te={batch} chatId="chat-1" onResolve={onResolve} />);
+    expect(screen.getByRole("button", { name: "Approve" })).toBeDisabled();
+
+    const appKey = within(screen.getByRole("region", { name: "App key" }));
+    fireEvent.click(await appKey.findByRole("button", { name: "Key, Local vault" }));
+    expect(screen.getByRole("button", { name: "Approve" })).toBeDisabled();
+
+    fireEvent.click(screen.getByRole("button", { name: "Skip User key" }));
+    fireEvent.change(screen.getByLabelText("Reason for skipping User key"), { target: { value: "I don't have one yet" } });
+    await waitFor(() => expect(screen.getByRole("button", { name: "Approve" })).toBeEnabled());
+    fireEvent.click(screen.getByRole("button", { name: "Approve" }));
+
+    expect(onResolve).toHaveBeenCalledWith({
+      type: "Vault", data: { type: "GrantedMany", data: {
+        grants: [{
+          query: "app key", connection_id: "local", vault_item_id: "item-1", grant_duration: "once",
+          target: { Prefix: { env_var_prefix: "APP_KEY" } },
+        }],
+        skipped: [{ query: "user key", reason: "I don't have one yet" }],
+      } },
+    }, "Approved 1, skipped 1");
+  });
+
+  it("allows skipping every slot, and a skip without a reason omits it", async () => {
+    const onResolve = vi.fn();
+    render(<CredentialsContent te={batch} chatId="chat-1" onResolve={onResolve} />);
+    fireEvent.click(screen.getByRole("button", { name: "Skip App key" }));
+    fireEvent.click(screen.getByRole("button", { name: "Skip User key" }));
+    fireEvent.click(screen.getByRole("button", { name: "Approve" }));
+    expect(onResolve).toHaveBeenCalledWith({
+      type: "Vault", data: { type: "GrantedMany", data: {
+        grants: [], skipped: [{ query: "app key" }, { query: "user key" }],
+      } },
+    }, "Skipped all");
+  });
+
+  it("lets a skipped slot be provided again", async () => {
+    render(<CredentialsContent te={batch} chatId="chat-1" onResolve={vi.fn()} />);
+    fireEvent.click(screen.getByRole("button", { name: "Skip App key" }));
+    fireEvent.click(screen.getByRole("button", { name: "Provide App key" }));
+    expect(await screen.findAllByRole("searchbox")).toHaveLength(2);
   });
 });

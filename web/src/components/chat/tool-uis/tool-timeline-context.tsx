@@ -23,6 +23,7 @@ const EXCLUDED_TOOLS = new Set([
   "Question",
   "Takeover",
   "Credential",
+  "Credentials",
   "App",
   "Completion",
   "Deferred",
