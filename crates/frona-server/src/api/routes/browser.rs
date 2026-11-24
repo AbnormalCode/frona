@@ -3,7 +3,7 @@ mod live;
 use axum::extract::{Path, Request, State};
 use axum::http::{HeaderMap, StatusCode};
 use axum::response::{IntoResponse, Redirect, Response};
-use axum::routing::get;
+use axum::routing::{get, post};
 use axum::{Json, Router, body::Body};
 use hyper_util::client::legacy::Client;
 use hyper_util::rt::{TokioExecutor, TokioIo};
@@ -19,8 +19,11 @@ use crate::core::error::{AppError, AuthErrorCode};
 use crate::core::principal::PrincipalKind;
 use crate::core::state::AppState;
 use crate::credential::vault::models::{Credential, CredentialData};
+use crate::tool::browser::session::BrowserSessionManager;
 
 // Only time spent waiting for a requested upstream frame counts, not downstream backpressure.
+/// Kept short so a bad host/port fails fast instead of hanging the settings UI.
+const TEST_CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
 const DEBUGGER_BODY_IDLE_TIMEOUT: Duration = Duration::from_secs(30);
 const SESSION_COOKIE: &str = "browser_session";
 // Browserless reads this setting before loading its UI. No backend address or token enters JS.
@@ -35,6 +38,7 @@ pub fn router() -> Router<AppState> {
         .route("/api/browser/snapshot", get(snapshot))
         .route("/api/browser/live/link", get(live::live_link))
         .route("/api/browser/live/ws", get(live::live_socket))
+        .route("/api/browser/test", post(test_browser))
         .route("/api/auth/browser/{credential_id}", get(auth_gate))
         .route("/api/browser/debugger/{credential_id}", get(document))
         .route("/api/browser/debugger/{credential_id}/", get(document))
@@ -42,6 +46,51 @@ pub fn router() -> Router<AppState> {
             "/api/browser/debugger/{credential_id}/{*path}",
             get(resource),
         )
+}
+
+#[derive(serde::Deserialize)]
+struct TestBrowserRequest {
+    ws_url: String,
+    #[serde(default)]
+    profiles_path: Option<String>,
+}
+
+/// Verifies browserless is reachable by opening (and immediately tearing down)
+/// a real CDP connection through the same launch args every session uses, so a
+/// passing test means real browser calls will work — not just that the socket
+/// accepts connections.
+///
+/// Builds the error response directly instead of going through `ApiError`,
+/// which would collapse `AppError::Browser` to a generic message: this button
+/// exists to say *why* the connection failed.
+async fn test_browser(auth: AuthUser, Json(req): Json<TestBrowserRequest>) -> Response {
+    let ws_url = req.ws_url.trim();
+    if ws_url.is_empty() {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({ "error": "WebSocket URL is required" })),
+        )
+            .into_response();
+    }
+
+    let config = BrowserConfig {
+        ws_url: ws_url.to_string(),
+        profiles_path: req
+            .profiles_path
+            .filter(|p| !p.trim().is_empty())
+            .unwrap_or_else(|| BrowserConfig::default().profiles_path),
+        ..BrowserConfig::default()
+    };
+
+    match BrowserSessionManager::test_connection(&auth.handle, &config, TEST_CONNECT_TIMEOUT).await
+    {
+        Ok(()) => Json(serde_json::json!({ "ok": true })).into_response(),
+        Err(e) => (
+            StatusCode::BAD_GATEWAY,
+            Json(serde_json::json!({ "error": format!("Failed to connect to browserless: {e}") })),
+        )
+            .into_response(),
+    }
 }
 
 async fn snapshot(auth: AuthUser, State(state): State<AppState>) -> Result<Response, ApiError> {

@@ -21,6 +21,13 @@ const BROWSERLESS_SESSION_TIMEOUT: Duration = Duration::from_secs(24 * 3600);
 const SELF_EVICT_MARGIN: Duration = Duration::from_secs(60);
 const CONNECT_RETRY_DELAYS: [Duration; 2] =
     [Duration::from_millis(100), Duration::from_millis(200)];
+/// The startup sweep runs as soon as the server boots, which under
+/// `docker compose up` is while Browserless is still opening its HTTP
+/// listener. Retry connect errors on the admin API so that race is absorbed
+/// instead of reported as a failure to reach Browserless.
+const SESSION_LIST_CONNECT_RETRIES: u32 = 4;
+const SESSION_LIST_RETRY_MIN_DELAY: Duration = Duration::from_millis(500);
+const SESSION_LIST_RETRY_MAX_DELAY: Duration = Duration::from_secs(4);
 
 #[derive(serde::Deserialize)]
 pub(crate) struct BrowserlessSession {
@@ -166,6 +173,26 @@ impl BrowserSessionManager {
             .map_err(|_| AppError::Browser("Invalid Browserless URL".into()))
     }
 
+    /// Builds the exact WS URL a real session would use (including the
+    /// `--user-data-dir` / `timeout` launch args) so the settings-page "Test
+    /// connection" button exercises what production sessions rely on, instead
+    /// of only proving the bare WS endpoint is reachable.
+    pub async fn test_connection(
+        user_handle: &crate::core::Handle,
+        config: &BrowserConfig,
+        timeout: Duration,
+    ) -> Result<(), frona_browser::Error> {
+        let ws_url =
+            Self::ws_url_for_profile(config, user_handle, "connection-test").map_err(|error| {
+                frona_browser::Error::ToolFailed {
+                    tool: "browser_connect",
+                    message: error.to_string(),
+                }
+            })?;
+        let connection = BrowserConnection::connect(ws_url.as_str(), timeout, timeout).await?;
+        connection.disconnect().await
+    }
+
     async fn create_connection(
         &self,
         user_handle: &crate::core::Handle,
@@ -191,6 +218,7 @@ impl BrowserSessionManager {
                     if error.is_retryable_connect_error()
                         && let Some(delay) = retries.next()
                     {
+                        tracing::warn!(error = %error, delay = ?delay, "Browser connect failed, retrying");
                         tokio::time::sleep(delay).await;
                         continue;
                     }
@@ -249,19 +277,32 @@ impl BrowserSessionManager {
                 return vec![];
             }
         };
-        let req = match hyper::Request::get(sessions_url.as_str()).body(Body::empty()) {
-            Ok(r) => r,
-            Err(e) => {
-                tracing::warn!("Failed to build sessions list request: {e}");
-                return vec![];
-            }
-        };
-
-        let resp = match client.request(req).await {
-            Ok(r) => r,
-            Err(e) => {
-                tracing::warn!("Failed to list browserless sessions: {e}");
-                return vec![];
+        let mut delay = SESSION_LIST_RETRY_MIN_DELAY;
+        let mut retries_left = SESSION_LIST_CONNECT_RETRIES;
+        let resp = loop {
+            let req = match hyper::Request::get(sessions_url.as_str()).body(Body::empty()) {
+                Ok(r) => r,
+                Err(e) => {
+                    tracing::warn!("Failed to build sessions list request: {e}");
+                    return vec![];
+                }
+            };
+            match client.request(req).await {
+                Ok(r) => break r,
+                Err(e) if e.is_connect() && retries_left > 0 => {
+                    tracing::debug!(
+                        error = %e,
+                        delay = ?delay,
+                        "Browserless not listening yet, retrying session list"
+                    );
+                    tokio::time::sleep(delay).await;
+                    delay = (delay * 2).min(SESSION_LIST_RETRY_MAX_DELAY);
+                    retries_left -= 1;
+                }
+                Err(e) => {
+                    tracing::warn!("Failed to list browserless sessions: {e}");
+                    return vec![];
+                }
             }
         };
 
@@ -450,6 +491,67 @@ mod tests {
             profiles_path: "/profiles".into(),
             connection_timeout_ms: 30000,
         }
+    }
+
+    #[test]
+    fn ws_url_appends_token_when_configured() {
+        let mut config = cfg("ws://browserless:3333");
+        config.api_token = Some("secret".into());
+        let url =
+            BrowserSessionManager::ws_url_for_profile(&config, &crate::handle!("alice"), "openai")
+                .unwrap();
+        assert_eq!(
+            url.as_str(),
+            "ws://browserless:3333/?token=secret&--user-data-dir=%2Fprofiles%2Falice%2Fopenai&timeout=86400000"
+        );
+    }
+
+    /// Browserless opens its HTTP listener a moment after the server boots; the
+    /// startup sweep must wait it out rather than conclude there is nothing to
+    /// clean up.
+    #[tokio::test]
+    async fn session_list_waits_for_a_listener_that_starts_late() {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+        let port = {
+            let probe = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+            probe.local_addr().unwrap().port()
+        };
+        let server = tokio::spawn(async move {
+            tokio::time::sleep(Duration::from_millis(700)).await;
+            let listener = tokio::net::TcpListener::bind(("127.0.0.1", port))
+                .await
+                .unwrap();
+            let (mut socket, _) = listener.accept().await.unwrap();
+            let mut buf = [0u8; 1024];
+            let _ = socket.read(&mut buf).await;
+            let body = r#"[{"browserId":"b1"}]"#;
+            let reply = format!(
+                "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{body}",
+                body.len()
+            );
+            socket.write_all(reply.as_bytes()).await.unwrap();
+        });
+
+        let manager = BrowserSessionManager::new(Some(cfg(&format!("ws://127.0.0.1:{port}"))));
+        let sessions = manager.list_browserless_sessions().await;
+        server.await.unwrap();
+        assert_eq!(sessions.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn test_connection_reports_an_unreachable_endpoint() {
+        let port = {
+            let probe = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+            probe.local_addr().unwrap().port()
+        };
+        let result = BrowserSessionManager::test_connection(
+            &crate::handle!("alice"),
+            &cfg(&format!("ws://127.0.0.1:{port}")),
+            Duration::from_secs(2),
+        )
+        .await;
+        assert!(result.is_err());
     }
 
     #[test]
