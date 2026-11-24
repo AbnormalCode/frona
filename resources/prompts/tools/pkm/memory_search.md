@@ -5,8 +5,14 @@ parameters:
   query:
     type: string
     description: A complete entity name, ontology class, or short phrase describing the memory you need.
-required:
-  - query
+  queries:
+    type: array
+    items:
+      type: string
+    description: Several things to look up in ONE call, each its own query (e.g. ["postgres host","postgres port","postgres password"]). Ask for every field or entity together rather than one call each. Results come back as one entry per query.
+anyOf:
+  - required: [query]
+  - required: [queries]
 ---
 Search memory using exact entity identity, effective-ontology class membership, page
 metadata, and page body text. Returns one JSON result per page path, ranked by the
@@ -15,3 +21,5 @@ verbatim page snippet. Use a short keyword bundle when the exact name is unknown
 server combines exact path and class-token evidence without separate filters. Use the
 absolute `file` path with `read` for prose and evidence, or pass `path` to
 memory_graph_get or memory_graph_sparql for structured graph work.
+
+When you need several things, pass them all as `queries` in a single call rather than one call per thing; with more than one query the result is a JSON array of `{query, result}` entries, in the order asked.

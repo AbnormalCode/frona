@@ -282,3 +282,82 @@ async fn memory_tools_use_chat_model_unless_memory_group_is_configured() {
         );
     }
 }
+
+/// Several facts learned in one turn ride in one call. Each is still its own entry -
+/// the saving is the tool turn, not the bookkeeping.
+#[tokio::test]
+async fn test_store_user_memory_tool_stores_a_batch_as_separate_entries() {
+    let db = test_db().await;
+    let svc = make_memory_service(db.clone()).await;
+    let tool = frona::memory::basic::tools::StoreUserMemoryTool::new(
+        svc,
+        PromptLoader::new(
+            std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+                .join("..")
+                .join("..")
+                .join("resources")
+                .join("prompts"),
+        ),
+    );
+
+    tool.execute(
+        "store_user_memory",
+        serde_json::json!({ "memories": ["Name is Alice", "Works at Acme", "   "] }),
+        &helpers::mock_context(),
+    )
+    .await
+    .expect("a batched store succeeds");
+
+    let repo: SurrealMemoryEntryRepo = SurrealRepo::new(db);
+    let mut stored: Vec<String> = repo
+        .find_by_user_id("test-user")
+        .await
+        .unwrap()
+        .into_iter()
+        .map(|e| e.content)
+        .collect();
+    stored.sort();
+    assert_eq!(
+        stored,
+        ["Name is Alice", "Works at Acme"],
+        "one entry per statement, and the blank one is dropped"
+    );
+}
+
+#[tokio::test]
+async fn test_store_agent_memory_tool_accepts_the_singular_and_the_batch() {
+    let db = test_db().await;
+    let svc = make_memory_service(db.clone()).await;
+    let tool = frona::memory::basic::tools::StoreAgentMemoryTool::new(
+        svc,
+        PromptLoader::new(
+            std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+                .join("..")
+                .join("..")
+                .join("resources")
+                .join("prompts"),
+        ),
+    );
+
+    let ctx = helpers::mock_context();
+    tool.execute(
+        "store_agent_memory",
+        serde_json::json!({ "memory": "One" }),
+        &ctx,
+    )
+    .await
+    .unwrap();
+    tool.execute(
+        "store_agent_memory",
+        serde_json::json!({ "memories": ["Two", "Three"] }),
+        &ctx,
+    )
+    .await
+    .unwrap();
+
+    let repo: SurrealMemoryEntryRepo = SurrealRepo::new(db);
+    let all = repo.find_by_agent_id(&ctx.agent.id).await.unwrap();
+    let mut stored: Vec<String> = all.into_iter().map(|e| e.content).collect();
+    stored.sort();
+    assert_eq!(stored, ["One", "Three", "Two"]);
+}

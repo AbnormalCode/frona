@@ -402,6 +402,22 @@ async fn service_pipeline_consolidates_searches_reads_and_cites_entities_and_pla
         1,
         "memory_remember wrote a short memory"
     );
+    remember
+        .execute(
+            "memory_remember",
+            json!({"contents": ["the host is db1", "  ", "the port is 5433", "the host is db1"]}),
+            &ctx,
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        repo.list_short_memory("test-user", None)
+            .await
+            .unwrap()
+            .len(),
+        3,
+        "a batch stores one short memory per distinct statement"
+    );
 
     let scope = ConsolidationScope {
         user_id: "test-user".into(),
@@ -480,6 +496,26 @@ async fn service_pipeline_consolidates_searches_reads_and_cites_entities_and_pla
         "no pages/ subdir in paths: {result:#}"
     );
 
+    let batch = search
+        .execute(
+            "memory_search",
+            json!({"queries": ["postgres restart", "restart-postgres"]}),
+            &ctx,
+        )
+        .await
+        .unwrap();
+    let batch: serde_json::Value = serde_json::from_str(batch.text_content()).unwrap();
+    let batch = batch
+        .as_array()
+        .expect("several queries come back as an array");
+    assert_eq!(batch.len(), 2);
+    assert_eq!(batch[0]["query"], "postgres restart");
+    assert_eq!(batch[1]["query"], "restart-postgres");
+    assert_eq!(
+        batch[0]["result"], result,
+        "each entry is the bare result a lone query would have returned"
+    );
+
     let file = std::fs::read_to_string(&pg_abs).expect("concept page file written to disk");
     assert!(
         file.contains("path: services/postgres"),
@@ -507,6 +543,28 @@ async fn service_pipeline_consolidates_searches_reads_and_cites_entities_and_pla
             .use_count,
         1,
         "memory_cite bumped use_count via the absolute .md path"
+    );
+    let batch = cite
+        .execute(
+            "memory_cite",
+            json!({"paths": [pg_abs, pb_abs, "/not/a/page.md"]}),
+            &ctx,
+        )
+        .await
+        .unwrap();
+    assert!(
+        batch.text_content().lines().count() >= 3,
+        "one line per path, a bad one doesn't void the rest: {}",
+        batch.text_content()
+    );
+    assert_eq!(
+        repo.entity_by_path("test-user", "services/postgres")
+            .await
+            .unwrap()
+            .unwrap()
+            .use_count,
+        2,
+        "the batch cited the same page again"
     );
 }
 
