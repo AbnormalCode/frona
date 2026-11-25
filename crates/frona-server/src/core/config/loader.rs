@@ -216,23 +216,33 @@ pub(super) fn lower_legacy_model_keys(yaml: &str) -> Result<String, AppError> {
     serde_yaml::to_string(&document).map_err(|error| AppError::Validation(error.to_string()))
 }
 
-/// Azure's `api_version` moved into the provider attributes as
-/// `azure_api_version`; the harness rejects the old key as an unknown attribute.
+/// `api_version` was a provider-wide field that only Azure read ("ignored by other
+/// providers"). Azure's now lives in the provider attributes as
+/// `azure_api_version`; the harness rejects the old key as an unknown attribute,
+/// which for any *other* provider would stop the server starting over a setting it
+/// never used - so there it is dropped.
 fn lower_azure_api_version(handle: &serde_yaml::Value, provider: &mut serde_yaml::Value) -> bool {
     use serde_yaml::Value;
     let Some(map) = provider.as_mapping_mut() else {
         return false;
     };
-    let brand = map
+    let is_azure = map
         .get("provider")
         .and_then(Value::as_str)
-        .or_else(|| handle.as_str());
-    if brand != Some("azure") {
-        return false;
-    }
+        .or_else(|| handle.as_str())
+        == Some("azure");
     let Some(version) = map.remove("api_version") else {
         return false;
     };
+    if !is_azure {
+        if !version.is_null() {
+            tracing::warn!(
+                provider = handle.as_str().unwrap_or("?"),
+                "Ignoring providers.*.api_version: only Azure OpenAI used it"
+            );
+        }
+        return true;
+    }
     map.entry(Value::String("azure_api_version".into()))
         .or_insert(version);
     true

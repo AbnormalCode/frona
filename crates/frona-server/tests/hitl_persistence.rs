@@ -260,6 +260,69 @@ async fn batched_credentials_with_skipped_slots_round_trip() {
     }
 }
 
+/// The fork stored batched credential answers before `skipped` existed. Rows
+/// written then carry no such key, and reading one used to fail the whole
+/// tool-call load ("Expected array, got none"), taking the chat with it.
+#[tokio::test]
+async fn a_batched_grant_stored_without_a_skipped_list_still_loads() {
+    use frona::inference::hitl::{CredentialRequest, VaultItemGrant};
+
+    let db = test_db().await;
+    let repo: SurrealRepo<ToolCall> = SurrealRepo::new(db.clone());
+
+    let mut te = base_tool_call("request_credentials");
+    te.hitl = Some(Hitl {
+        prompt: "Allow two?".into(),
+        url: "https://x/chats/c1".into(),
+        request: HitlRequest::Credentials {
+            items: vec![CredentialRequest {
+                query: "app key".into(),
+                label: None,
+            }],
+            reason: "Weather API".into(),
+        },
+        status: ToolStatus::Resolved,
+        response: Some(HitlResponse::Vault(VaultGrant::GrantedMany {
+            grants: vec![VaultItemGrant {
+                query: "app key".into(),
+                connection_id: "conn-1".into(),
+                vault_item_id: "item-1".into(),
+                grant_duration: GrantDuration::Once,
+                target: CredentialTarget::Prefix {
+                    env_var_prefix: "APP".into(),
+                },
+            }],
+            skipped: vec![],
+        })),
+        delivery: None,
+    });
+    let id = te.id.clone();
+    repo.create(&te).await.unwrap();
+
+    // Make the row look the way the fork wrote it: no `skipped` key at all.
+    db.query(
+        "UPDATE type::record('tool_call', $id) SET hitl.response.Vault.GrantedMany.skipped = NONE",
+    )
+    .bind(("id", id.clone()))
+    .await
+    .unwrap()
+    .check()
+    .unwrap();
+
+    let found = repo
+        .find_by_id(&id)
+        .await
+        .expect("a row without `skipped` reads")
+        .expect("and is found");
+    match found.hitl.unwrap().response.unwrap() {
+        HitlResponse::Vault(VaultGrant::GrantedMany { grants, skipped }) => {
+            assert_eq!(grants.len(), 1);
+            assert!(skipped.is_empty());
+        }
+        _ => panic!("expected GrantedMany"),
+    }
+}
+
 #[tokio::test]
 async fn task_event_completion_round_trips() {
     use frona::agent::task::models::TaskStatus;

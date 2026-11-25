@@ -138,7 +138,11 @@ pub enum VaultGrant {
     /// whole batch.
     GrantedMany {
         grants: Vec<VaultItemGrant>,
+        /// `surreal` as well as `serde`: the database read path honours only the
+        /// former, and the fork stored `GrantedMany` answers with no `skipped` key
+        /// at all - without the default, every chat holding one failed to load.
         #[serde(default)]
+        #[surreal(default)]
         skipped: Vec<SkippedCredential>,
     },
     Denied,

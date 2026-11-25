@@ -562,3 +562,27 @@ fn a_legacy_azure_api_version_becomes_the_provider_attribute() {
     );
     assert!(!azure.attributes.contains_key("api_version"));
 }
+
+/// The fork accepted `api_version` on every provider and ignored it outside Azure,
+/// so existing configs carry it on providers that never used it - set to a value,
+/// to null, or to an empty string. Refusing to start over that would turn a no-op
+/// setting into an outage.
+#[test]
+fn a_legacy_api_version_on_a_non_azure_provider_is_dropped() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("config.yaml");
+    std::fs::write(
+        &path,
+        "providers:\n  byteplus:\n    api_key: k\n    api_version: 2024-10-21\n  openai:\n    api_key: k\n    api_version: null\n  custom:\n    provider: openai\n    api_key: k\n    api_version: ''\n",
+    )
+    .unwrap();
+    let loaded = ConfigService::load_with_env(&path, Default::default()).unwrap();
+    for handle in ["byteplus", "openai", "custom"] {
+        let provider = &loaded.config.providers[&crate::core::Handle::const_validated(handle)];
+        assert!(
+            !provider.attributes.contains_key("api_version")
+                && !provider.attributes.contains_key("azure_api_version"),
+            "{handle} keeps no api_version"
+        );
+    }
+}
