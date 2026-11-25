@@ -65,6 +65,9 @@
 # inference:
 #   max_tool_turns: 200
 #   max_concurrent_tool_calls: 4  # Default: available CPUs clamped to 2–8; 1 = sequential
+#   max_model_calls: 500          # Per run (a chat turn, or every turn of a task); 0 = unlimited
+#   max_tool_calls: 2000          # Per run; 0 = unlimited
+#   max_run_tokens: 50000000      # Per run, input + output over every call; 0 = unlimited
 #   default_max_tokens: 8192
 #   compaction_trigger_pct: 80
 #   history_truncation_pct: 90

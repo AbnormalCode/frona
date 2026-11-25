@@ -36,6 +36,33 @@ export function AdvancedSection({ inference, scheduler, app, onChange }: Advance
         />
 
         <NumberInput
+          label="Max Model Calls per Run"
+          description="Most model calls one run may make - a chat turn, or every turn of a task. 0 means unlimited"
+          value={inference.max_model_calls}
+          onChange={(max_model_calls) => onChange({ inference: { ...inference, max_model_calls } })}
+          min={0}
+          placeholder="500"
+        />
+
+        <NumberInput
+          label="Max Tool Calls per Run"
+          description="Most tool calls one run may make. 0 means unlimited"
+          value={inference.max_tool_calls}
+          onChange={(max_tool_calls) => onChange({ inference: { ...inference, max_tool_calls } })}
+          min={0}
+          placeholder="2000"
+        />
+
+        <NumberInput
+          label="Max Tokens per Run"
+          description="Most tokens one run may use, counting every call's input and output. Large-context models resend the whole history on each call, so keep this high. 0 means unlimited"
+          value={inference.max_run_tokens}
+          onChange={(max_run_tokens) => onChange({ inference: { ...inference, max_run_tokens } })}
+          min={0}
+          placeholder="50000000"
+        />
+
+        <NumberInput
           label="Default Max Tokens"
           description="Default maximum tokens for LLM responses"
           value={inference.default_max_tokens}

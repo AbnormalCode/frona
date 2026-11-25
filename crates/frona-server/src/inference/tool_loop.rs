@@ -178,7 +178,9 @@ pub async fn run_tool_loop(
     message_id: &str,
     input_token_estimate: Option<frona_harness::inference::context::InputTokenEstimate>,
 ) -> Result<ToolLoopOutcome, AppError> {
-    let controls = super::RuntimeControls::default();
+    let controls = super::RuntimeControls::new(std::sync::Arc::new(
+        frona_harness::DefaultBudget::new(model_group.inference.budget_limits()),
+    ));
     let report = controls.report();
     report
         .record_run(async {

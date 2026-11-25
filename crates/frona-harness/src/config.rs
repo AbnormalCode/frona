@@ -550,6 +550,31 @@ pub struct InferenceConfig {
         description = "When a model's image support is unknown (absent from the catalog and both override lists), treat it as text-only so images are transcribed or stripped instead of risking a provider 404. Default false."
     )]
     pub transcribe_when_vision_unknown: bool,
+    #[schemars(
+        description = "Most model calls one run may make: one chat turn, or every turn of a task. 0 = unlimited. A backstop against runaway loops; max_tool_turns is the per-loop limit."
+    )]
+    pub max_model_calls: u64,
+    #[schemars(
+        description = "Most tool calls one run may make: one chat turn, or every turn of a task. 0 = unlimited."
+    )]
+    pub max_tool_calls: u64,
+    #[schemars(
+        description = "Most tokens one run may use, counting every call's input and output: one chat turn, or every turn of a task. Long histories on large-context models count in full each call, so this needs to be generous. 0 = unlimited."
+    )]
+    pub max_run_tokens: u64,
+}
+
+impl InferenceConfig {
+    /// The admission limits for one run. `0` disables a dimension.
+    pub fn budget_limits(&self) -> crate::BudgetLimits {
+        let limit = |value: u64| (value > 0).then_some(value);
+        crate::BudgetLimits {
+            model_attempts: limit(self.max_model_calls),
+            tool_calls: limit(self.max_tool_calls),
+            tokens: limit(self.max_run_tokens),
+            ..crate::BudgetLimits::default()
+        }
+    }
 }
 
 impl Default for InferenceConfig {
@@ -563,6 +588,13 @@ impl Default for InferenceConfig {
             vision_models: Vec::new(),
             text_only_models: Vec::new(),
             transcribe_when_vision_unknown: false,
+            // The engine's own defaults (64 calls, 256 tools, 1M tokens) cut off
+            // ordinary long turns: with a large-context model each call carries
+            // the whole history, so a few calls spend a million tokens. These
+            // stay finite so a loop that never converges is still stopped.
+            max_model_calls: 500,
+            max_tool_calls: 2_000,
+            max_run_tokens: 50_000_000,
         }
     }
 }
@@ -598,4 +630,48 @@ pub fn default_tool_concurrency() -> std::num::NonZeroUsize {
             .clamp(2, 8),
     )
     .unwrap()
+}
+
+#[cfg(test)]
+mod budget_limit_tests {
+    use super::*;
+
+    #[test]
+    fn a_run_may_use_far_more_than_the_engines_built_in_allowance() {
+        let defaults = crate::BudgetLimits::default();
+        let limits = InferenceConfig::default().budget_limits();
+        // A few calls on a large-context model carry the whole history each time;
+        // the engine's own 1M-token allowance ended ordinary turns.
+        assert!(limits.tokens.unwrap() > defaults.tokens.unwrap() * 10);
+        assert!(limits.model_attempts.unwrap() > defaults.model_attempts.unwrap());
+        assert!(limits.tool_calls.unwrap() > defaults.tool_calls.unwrap());
+        // The per-loop turn limit still applies first.
+        assert!(limits.model_attempts.unwrap() > InferenceConfig::default().max_tool_turns as u64);
+    }
+
+    #[test]
+    fn zero_disables_a_limit_and_a_value_sets_it() {
+        let config = InferenceConfig {
+            max_model_calls: 0,
+            max_tool_calls: 7,
+            max_run_tokens: 0,
+            ..InferenceConfig::default()
+        };
+        let limits = config.budget_limits();
+        assert_eq!(limits.model_attempts, None);
+        assert_eq!(limits.tool_calls, Some(7));
+        assert_eq!(limits.tokens, None);
+    }
+
+    #[test]
+    fn the_limits_load_from_a_model_groups_inference_section() {
+        let config: InferenceConfig =
+            serde_yaml::from_str("max_run_tokens: 123\nmax_model_calls: 9").unwrap();
+        assert_eq!(config.max_run_tokens, 123);
+        assert_eq!(config.max_model_calls, 9);
+        assert_eq!(
+            config.max_tool_calls,
+            InferenceConfig::default().max_tool_calls
+        );
+    }
 }

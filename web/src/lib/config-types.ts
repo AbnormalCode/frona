@@ -206,6 +206,10 @@ export interface ModelProviderConfig {
 export interface InferenceConfig {
   max_tool_turns: number;
   max_concurrent_tool_calls: number;
+  /** Per run (a chat turn, or every turn of a task); 0 = unlimited. */
+  max_model_calls: number;
+  max_tool_calls: number;
+  max_run_tokens: number;
   default_max_tokens: number;
   compaction_trigger_pct: number;
   history_truncation_pct: number;

@@ -659,7 +659,24 @@ impl TaskExecutor {
 
         self.save_initial_message_if_needed(&task, &chat_id).await?;
 
-        let budget = Arc::new(frona_harness::DefaultBudget::default());
+        // One allowance for every turn of the task, sized from the agent's own
+        // model group rather than the engine default.
+        let limits = match self.harness.agent_service.find_by_id(&task.agent_id).await {
+            Ok(Some(agent)) => self
+                .harness
+                .chat_service
+                .model_providers()
+                .resolve_with_fallback(
+                    &frona_harness::inference::ModelRef(agent.model_group.into()),
+                    &frona_harness::inference::ModelRef::PRIMARY,
+                )
+                .map(|group| group.inference.budget_limits())
+                .unwrap_or_else(|_| {
+                    frona_harness::config::InferenceConfig::default().budget_limits()
+                }),
+            _ => frona_harness::config::InferenceConfig::default().budget_limits(),
+        };
+        let budget = Arc::new(frona_harness::DefaultBudget::new(limits));
         for turn in 0..MAX_TASK_RETRIES {
             if cancel_token.is_cancelled() {
                 self.handle_cancelled(&task).await?;
