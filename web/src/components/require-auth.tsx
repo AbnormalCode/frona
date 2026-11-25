@@ -83,3 +83,38 @@ export function BootSpinner({ subtitle }: { subtitle?: string }) {
     </div>
   );
 }
+
+/// A boot request failed for a reason a reconnect will not fix (the server
+/// answered, with an error). Says what failed and offers a retry, rather than
+/// leaving the logo animating over a screen that will never finish loading.
+export function BootError({
+  what,
+  message,
+  onRetry,
+}: {
+  what: string;
+  message: string;
+  onRetry: () => void;
+}) {
+  return (
+    <div className="flex min-h-screen items-center justify-center px-4">
+      <div role="alert" className="flex max-w-md flex-col items-center gap-3 text-center">
+        <Logo size={64} />
+        <p className="text-base font-medium text-text-primary">
+          Couldn&apos;t load your {what}
+        </p>
+        <p className="break-words text-sm text-text-tertiary">{message}</p>
+        <p className="text-xs text-text-tertiary">
+          The server is running but returned an error. Its log has the detail.
+        </p>
+        <button
+          type="button"
+          onClick={onRetry}
+          className="rounded-lg border border-border px-4 py-2 text-sm font-medium text-text-secondary transition hover:bg-surface-tertiary"
+        >
+          Try again
+        </button>
+      </div>
+    </div>
+  );
+}

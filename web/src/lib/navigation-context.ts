@@ -69,6 +69,27 @@ export type NavigationContextValue = Omit<
 
 const NavigationContext = createContext<NavigationContextRaw | null>(null);
 
+/// One of the lists the app needs before it can render failed to load. Carries
+/// which, so the boot screen can say so instead of spinning on a silent failure.
+export class BootLoadError extends Error {
+  constructor(
+    public what: string,
+    public cause: unknown,
+  ) {
+    super(
+      cause instanceof Error && cause.message
+        ? cause.message
+        : `Could not load ${what}`,
+    );
+  }
+}
+
+function named<T>(what: string, request: Promise<T>): Promise<T> {
+  return request.catch((error: unknown) => {
+    throw new BootLoadError(what, error);
+  });
+}
+
 interface NavigationResponse {
   spaces: SpaceWithChats[];
   standalone_chats: ChatResponse[];
@@ -100,10 +121,10 @@ export function NavigationProvider({
   /// until the new one lands.
   const refresh = useCallback(async () => {
     const [nav, tasksData, agentsData, contactsData] = await Promise.all([
-      api.get<NavigationResponse>("/api/navigation"),
-      api.get<TaskResponse[]>("/api/tasks"),
-      api.get<Agent[]>("/api/agents"),
-      getContacts(),
+      named("chats", api.get<NavigationResponse>("/api/navigation")),
+      named("tasks", api.get<TaskResponse[]>("/api/tasks")),
+      named("agents", api.get<Agent[]>("/api/agents")),
+      named("contacts", getContacts()),
     ]);
     setSpaces(nav.spaces);
     setStandaloneChats(nav.standalone_chats);

@@ -1,9 +1,10 @@
 "use client";
 
-import { useEffect, useRef } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useAuth } from "@/lib/auth";
-import { useNavigationRaw } from "@/lib/navigation-context";
-import { BootSpinner, RequireAuth } from "@/components/require-auth";
+import { BootLoadError, useNavigationRaw } from "@/lib/navigation-context";
+import { ApiError } from "@/lib/api-client";
+import { BootError, BootSpinner, RequireAuth } from "@/components/require-auth";
 
 /// When this renders children, the user is authed, connection is online,
 /// and all nav boot fields (`agents`, `spaces`, `tasks`, `contacts`) are
@@ -22,13 +23,28 @@ function NavigationGate({ children }: { children: React.ReactNode }) {
 
   const refreshRef = useRef(refresh);
   refreshRef.current = refresh;
+  const [failure, setFailure] = useState<BootLoadError | null>(null);
+
+  const load = useCallback(() => {
+    setFailure(null);
+    refreshRef.current().catch((error: unknown) => {
+      // Network failures flip connectionState to "offline" via auth.ts;
+      // RequireAuth handles the retry. A server that answered with an error
+      // will answer the same way again, so say so instead of spinning forever.
+      const cause = error instanceof BootLoadError ? error.cause : error;
+      if (cause instanceof ApiError && cause.kind === "unavailable") return;
+      setFailure(
+        error instanceof BootLoadError
+          ? error
+          : new BootLoadError("workspace", error),
+      );
+    });
+  }, []);
+
   useEffect(() => {
     if (!user) return;
-    refreshRef.current().catch(() => {
-      // Network failures flip connectionState to "offline" via auth.ts;
-      // RequireAuth handles the retry.
-    });
-  }, [user]);
+    load();
+  }, [user, load]);
 
   const dataReady =
     agents !== undefined &&
@@ -38,6 +54,10 @@ function NavigationGate({ children }: { children: React.ReactNode }) {
 
   if (dataReady) {
     return <>{children}</>;
+  }
+
+  if (failure) {
+    return <BootError what={failure.what} message={failure.message} onRetry={load} />;
   }
 
   const pending: string[] = [];
