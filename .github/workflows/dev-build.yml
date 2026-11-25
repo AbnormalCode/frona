@@ -52,7 +52,7 @@ jobs:
             VERSION=${{ steps.tag.outputs.name }}
           tags: ${{ steps.tag.outputs.image }}:${{ steps.tag.outputs.name }}
           cache-from: type=gha
-          cache-to: type=gha,mode=max
+          cache-to: type=gha,mode=min
 
       - name: Summary
         run: |
