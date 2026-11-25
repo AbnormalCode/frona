@@ -20,7 +20,7 @@ pub enum Error {
     #[error("tool {tool}: {message}")]
     ToolFailed { tool: &'static str, message: String },
 
-    #[error(transparent)]
+    #[error("{}", cdp_message(.0))]
     Cdp(#[from] chromiumoxide::error::CdpError),
 
     #[error(transparent)]
@@ -66,6 +66,28 @@ impl Error {
     }
 }
 
+/// A refused WebSocket upgrade carries the server's own explanation in its body
+/// (Browserless says why it could not start a session), but the library's message
+/// is only the status line. Keep the explanation: "HTTP error: 500" alone sends
+/// people hunting through logs for what the response already said.
+fn cdp_message(error: &chromiumoxide::error::CdpError) -> String {
+    use chromiumoxide::error::CdpError;
+    use tungstenite::Error as WsError;
+    if let CdpError::Ws(WsError::Http(response)) = error
+        && let Some(body) = response.body().as_deref()
+    {
+        let text: String = String::from_utf8_lossy(body)
+            .trim()
+            .chars()
+            .take(300)
+            .collect();
+        if !text.is_empty() {
+            return format!("{error}: {text}");
+        }
+    }
+    error.to_string()
+}
+
 /// Shared by the handler loop and the public `is_disconnect` so they
 /// classify identically.
 pub(crate) fn is_cdp_disconnect(e: &chromiumoxide::error::CdpError) -> bool {
@@ -78,6 +100,33 @@ pub(crate) fn is_cdp_disconnect(e: &chromiumoxide::error::CdpError) -> bool {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn a_refused_upgrade_reports_what_the_server_said() {
+        use chromiumoxide::error::CdpError;
+        use tungstenite::{Error as WsError, http::Response};
+
+        let refused = |body: Option<&[u8]>| {
+            super::Error::Cdp(CdpError::Ws(WsError::Http(Box::new(
+                Response::builder()
+                    .status(500)
+                    .body(body.map(<[u8]>::to_vec))
+                    .unwrap(),
+            ))))
+            .to_string()
+        };
+        let with_reason = refused(Some(b"  Failed to launch: cannot write /profiles/alice\n"));
+        assert!(with_reason.contains("500"), "{with_reason}");
+        assert!(
+            with_reason.ends_with("Failed to launch: cannot write /profiles/alice"),
+            "{with_reason}"
+        );
+        // No body (or an empty one) leaves the library's own message alone.
+        assert!(!refused(None).contains(": \n"));
+        assert_eq!(refused(None), refused(Some(b"   ")));
+        // A runaway body is cut.
+        assert!(refused(Some(&[b'x'; 5000])).len() < 400);
+    }
+
     use super::*;
     use chromiumoxide::error::CdpError;
     use tungstenite::{Error as WsError, error::ProtocolError};
