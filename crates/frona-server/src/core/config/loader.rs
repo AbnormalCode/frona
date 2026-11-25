@@ -183,6 +183,22 @@ impl ConfigService {
 /// (the harness does not place cache breakpoints for OpenRouter) and is dropped.
 const LEGACY_MODEL_KEYS: [&str; 3] = ["provider_routing", "route", "prompt_caching"];
 
+/// [`lower_legacy_model_keys`] for a document the settings service holds as a
+/// value. The service validates strictly, so a file the loader accepted only
+/// because it converts old keys would otherwise fail every save from the
+/// settings page; converting here also migrates the file as it is saved.
+pub(super) fn lower_legacy_document(
+    document: serde_json::Value,
+) -> Result<serde_json::Value, AppError> {
+    let yaml = serde_yaml::to_string(&document)
+        .map_err(|error| AppError::Validation(error.to_string()))?;
+    let lowered = lower_legacy_model_keys(&yaml)?;
+    if lowered == yaml {
+        return Ok(document);
+    }
+    serde_yaml::from_str(&lowered).map_err(|error| AppError::Validation(error.to_string()))
+}
+
 pub(super) fn lower_legacy_model_keys(yaml: &str) -> Result<String, AppError> {
     if !LEGACY_MODEL_KEYS
         .iter()

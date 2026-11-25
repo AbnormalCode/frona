@@ -122,6 +122,8 @@ impl ConfigService {
         }
         let mut target = document(&bytes)?;
         merge_config_patch(&mut target, patch)?;
+        // A patch built from an older client's copy can bring the old keys back.
+        target = super::loader::lower_legacy_document(target)?;
         normalize_handles(&mut target)?;
         let config = validate_document(&target)?;
         for (handle, provider) in &config.providers {
@@ -204,7 +206,8 @@ fn document(bytes: &[u8]) -> Result<Value, AppError> {
     if bytes.is_empty() {
         return Ok(serde_json::json!({}));
     }
-    serde_yaml::from_slice(bytes).map_err(validation)
+    let document: Value = serde_yaml::from_slice(bytes).map_err(validation)?;
+    super::loader::lower_legacy_document(document)
 }
 
 fn atomic_write(path: &Path, bytes: &[u8], fault: SaveFault) -> Result<(), AppError> {
@@ -412,6 +415,54 @@ mod tests {
         let restarted = ConfigService::new(load(&path)).unwrap();
         assert_eq!(restarted.active().server.port, 4321);
         assert!(!restarted.persisted().unwrap().restart_required);
+    }
+
+    /// A config the fork wrote still loads (the loader converts its old keys), so
+    /// the settings page must be able to save it too. Strict validation of the
+    /// raw file used to reject it: "models.primary: unknown field
+    /// `provider_routing`".
+    #[tokio::test]
+    async fn a_file_with_legacy_model_keys_can_be_saved_and_is_migrated() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("config.yaml");
+        std::fs::write(
+            &path,
+            "providers:\n  openrouter:\n    provider: openrouter\n    api_key: k\n  byteplus:\n    api_key: k\n    api_version: 2024-10-21\nmodels:\n  primary:\n    provider: openrouter\n    model: openai/gpt-x\n    provider_routing:\n      sort: price\n      zdr: true\n    fallbacks:\n    - provider: openrouter\n      model: other/y\n      route: fallback\n",
+        )
+        .unwrap();
+        let service = service(&path);
+
+        // What the settings page is shown is already in the current shape.
+        let shown = service.persisted().unwrap().config;
+        assert!(shown["models"]["primary"].get("provider_routing").is_none());
+        assert_eq!(
+            shown["models"]["primary"]["extra_params"]["provider"],
+            json!({"sort": "price", "zdr": true})
+        );
+
+        let saved = service
+            .save(json!({"server":{"port":4321}}), None)
+            .await
+            .expect("a legacy file saves");
+        let on_disk = std::fs::read_to_string(&path).unwrap();
+        assert!(!on_disk.contains("provider_routing"), "{on_disk}");
+        assert!(!on_disk.contains("api_version"), "{on_disk}");
+        assert_eq!(saved.config["server"]["port"], json!(4321));
+
+        // A patch carrying the old key back is converted rather than refused.
+        service
+            .save(
+                json!({"models":{"primary":{"provider_routing":{"sort":"latency"}}}}),
+                None,
+            )
+            .await
+            .expect("an old-shaped patch saves");
+        assert!(
+            !std::fs::read_to_string(&path)
+                .unwrap()
+                .contains("provider_routing")
+        );
+        assert_eq!(load(&path).config.models.len(), 1);
     }
 
     #[tokio::test]
