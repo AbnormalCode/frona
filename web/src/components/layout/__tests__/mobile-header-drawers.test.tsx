@@ -3,7 +3,7 @@ import { fireEvent, render, screen } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { TopBar } from "../top-bar";
 
-const mocks = vi.hoisted(() => ({ push: vi.fn(), replace: vi.fn(), markRead: vi.fn(), markAllRead: vi.fn(), logout: vi.fn() }));
+const mocks = vi.hoisted(() => ({ push: vi.fn(), replace: vi.fn(), markRead: vi.fn(), markAllRead: vi.fn(), logout: vi.fn(), setMobileNavOpen: vi.fn(), setMobileSubNavOpen: vi.fn() }));
 vi.mock("next/navigation", () => ({
   useRouter: () => ({ push: mocks.push, replace: mocks.replace }),
   usePathname: () => window.location.pathname,
@@ -13,7 +13,13 @@ vi.mock("@/lib/auth", () => ({
   useAuth: () => ({ user: { email: "user@example.test", permissions: { is_admin: true, list_users: true } }, logout: mocks.logout }),
 }));
 vi.mock("@/lib/navigation-context", () => ({
-  useNavigation: () => ({ agents: [{ id: "helper", name: "Helper", is_shared: true }] }),
+  useNavigation: () => ({
+    agents: [{ id: "helper", name: "Helper", is_shared: true }],
+    mobileNavOpen: false,
+    mobileSubNavOpen: false,
+    setMobileNavOpen: mocks.setMobileNavOpen,
+    setMobileSubNavOpen: mocks.setMobileSubNavOpen,
+  }),
 }));
 vi.mock("@/lib/session-context", () => ({ useSession: () => ({ setActiveChat: vi.fn() }) }));
 vi.mock("@/lib/activity-context", () => ({ useActivity: () => ({ snapshot: { executions: [] } }) }));
@@ -116,5 +122,28 @@ describe("mobile header drawers", () => {
     tap(configure ? await screen.findByRole("button", { name: "Configure Helper" }) : await screen.findByText("Helper"));
     expect(trigger).toHaveAttribute("aria-expanded", "false");
     expect(mocks.push).toHaveBeenCalledExactlyOnceWith(configure ? "/agents?id=helper" : "/chat?agent=helper");
+  });
+});
+
+describe("mobile hamburger", () => {
+  // Each of these pages draws its own left drawer from the sub-nav state; the
+  // hamburger has to drive that state or tapping it does nothing.
+  it.each(["/settings", "/settings#skills", "/admin/settings", "/admin/settings#models", "/agents", "/channels", "/mcp"])(
+    "opens the page's own drawer on %s",
+    (href) => {
+      window.history.replaceState(null, "", href);
+      render(<TopBar />);
+      tap(document.getElementById("mobile-navigation-toggle")!);
+      expect(mocks.setMobileSubNavOpen).toHaveBeenCalledExactlyOnceWith(true);
+      expect(mocks.setMobileNavOpen).not.toHaveBeenCalled();
+    },
+  );
+
+  it.each(["/chat?id=current", "/home", "/usage"])("opens the main navigation on %s", (href) => {
+    window.history.replaceState(null, "", href);
+    render(<TopBar />);
+    tap(document.getElementById("mobile-navigation-toggle")!);
+    expect(mocks.setMobileNavOpen).toHaveBeenCalledExactlyOnceWith(true);
+    expect(mocks.setMobileSubNavOpen).not.toHaveBeenCalled();
   });
 });

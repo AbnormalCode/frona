@@ -41,7 +41,14 @@ export function TopBar() {
 
   const isChatRelated = pathname.startsWith("/chat") || pathname.startsWith("/home") || pathname.startsWith("/space");
   const configurationRoute = ["/agents", "/channels", "/mcp"].includes(pathname);
-  const usesSubNav = configurationRoute || pathname.startsWith("/settings");
+  // The settings pages - the user's own and the server's - render their own left
+  // drawer, bound to the sub-nav state. Matching only "/settings" left the
+  // server settings page ("/admin/settings") toggling the main navigation, which
+  // nothing on that page shows, so its hamburger did nothing.
+  const usesSubNav =
+    configurationRoute ||
+    pathname.startsWith("/settings") ||
+    pathname.startsWith("/admin/settings");
   const activeTab = isChatRelated ? "chat" : (topTabs.find((t) => pathname.startsWith(t.href))?.id ?? null);
 
   useEffect(() => {
