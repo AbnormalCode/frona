@@ -211,16 +211,48 @@ impl BrowserSessionManager {
         let timeout = Duration::from_millis(config.connection_timeout_ms);
         let lifetime = BROWSERLESS_SESSION_TIMEOUT.saturating_sub(SELF_EVICT_MARGIN);
         let mut retries = CONNECT_RETRY_DELAYS.into_iter();
+        let mut recovered = false;
         loop {
             match BrowserConnection::connect(ws_url.as_str(), timeout, lifetime).await {
                 Ok(connection) => return Ok(connection),
                 Err(error) => {
+                    // Browserless refuses to start a browser on a profile another
+                    // Chrome still holds ("The browser is already running for
+                    // ...") and says only 500. Waiting does not help; clear
+                    // whatever holds the profile and try once more.
+                    if !recovered
+                        && error
+                            .refused_status()
+                            .is_some_and(|status| (500..600).contains(&status))
+                    {
+                        recovered = true;
+                        tracing::warn!(
+                            error = %error,
+                            user = %user_handle,
+                            provider = %provider,
+                            "Browserless refused to start a browser for this profile; \
+                             clearing the sessions holding it and retrying once"
+                        );
+                        self.recover_profile(user_handle, provider).await;
+                        continue;
+                    }
                     if error.is_retryable_connect_error()
                         && let Some(delay) = retries.next()
                     {
                         tracing::warn!(error = %error, delay = ?delay, "Browser connect failed, retrying");
                         tokio::time::sleep(delay).await;
                         continue;
+                    }
+                    if error
+                        .refused_status()
+                        .is_some_and(|status| (500..600).contains(&status))
+                    {
+                        return Err(AppError::Browser(format!(
+                            "Browserless refused to start a browser for this profile ({error}). \
+                             A Chrome from an earlier session usually still holds the profile \
+                             directory; the Browserless log names the reason. Restarting \
+                             Browserless clears it."
+                        )));
                     }
                     return Err(AppError::Browser(format!(
                         "Failed to connect to browser: {error}"
@@ -385,13 +417,41 @@ impl BrowserSessionManager {
         tracing::info!(count = browser_ids.len(), "Killed browserless sessions");
     }
 
+    /// After Browserless refused to start a browser on this profile: kill the
+    /// sessions that hold it, and if none could be identified (the session list
+    /// did not name the profile the way we expect) fall back to clearing every
+    /// browser session - but only when Frona itself has no other live connection
+    /// that would be taken down with them.
+    async fn recover_profile(&self, user_handle: &crate::core::Handle, provider: &str) {
+        let killed = self
+            .kill_browserless_sessions_for_profile(user_handle, provider)
+            .await;
+        if killed == 0 {
+            let this = Self::profile_key(user_handle, provider);
+            let others_live = self
+                .sessions
+                .read()
+                .await
+                .iter()
+                .any(|(key, connection)| *key != this && connection.is_alive());
+            if !others_live {
+                tracing::warn!(
+                    "No session was identified as holding the profile; clearing all browser sessions"
+                );
+                self.kill_all_sessions().await;
+            }
+        }
+        // Chrome releases the profile lock as it exits.
+        tokio::time::sleep(Duration::from_millis(500)).await;
+    }
+
     async fn kill_browserless_sessions_for_profile(
         &self,
         user_handle: &crate::core::Handle,
         provider: &str,
-    ) {
+    ) -> usize {
         let Some(config) = self.config.as_ref() else {
-            return;
+            return 0;
         };
         let profile_path = config.profile_path(user_handle, provider);
         let profile_str = profile_path.to_string_lossy();
@@ -411,6 +471,7 @@ impl BrowserSessionManager {
             .collect();
 
         self.kill_browserless_session_ids(&ids).await;
+        ids.len()
     }
 
     pub async fn kill_all_sessions(&self) {
@@ -491,6 +552,126 @@ mod tests {
             profiles_path: "/profiles".into(),
             connection_timeout_ms: 30000,
         }
+    }
+
+    /// Browserless answers a WebSocket upgrade with 500 when a Chrome from an
+    /// earlier session still holds the profile directory. Frona clears what holds
+    /// it and tries again, instead of failing every later call the same way.
+    struct FakeBrowserless {
+        port: u16,
+        log: std::sync::Arc<std::sync::Mutex<Vec<String>>>,
+    }
+
+    impl FakeBrowserless {
+        async fn start(sessions_json: &'static str) -> Self {
+            use tokio::io::{AsyncReadExt, AsyncWriteExt};
+            let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+            let port = listener.local_addr().unwrap().port();
+            let log = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+            let seen = log.clone();
+            tokio::spawn(async move {
+                loop {
+                    let Ok((mut socket, _)) = listener.accept().await else {
+                        return;
+                    };
+                    let seen = seen.clone();
+                    tokio::spawn(async move {
+                        let mut buf = [0u8; 4096];
+                        let n = socket.read(&mut buf).await.unwrap_or(0);
+                        let request = String::from_utf8_lossy(&buf[..n]).to_string();
+                        let path = request
+                            .lines()
+                            .next()
+                            .and_then(|line| line.split_whitespace().nth(1))
+                            .unwrap_or("")
+                            .to_string();
+                        let upgrade = request.to_lowercase().contains("upgrade: websocket");
+                        let (status, body) = if upgrade {
+                            seen.lock().unwrap().push("UPGRADE".into());
+                            (
+                                "500 Internal Server Error",
+                                "Internal Server Error".to_string(),
+                            )
+                        } else if path.starts_with("/sessions") {
+                            seen.lock().unwrap().push("SESSIONS".into());
+                            ("200 OK", sessions_json.to_string())
+                        } else {
+                            // The query carries the API token; the path is what matters.
+                            let route = path.split('?').next().unwrap_or("");
+                            seen.lock().unwrap().push(format!("GET {route}"));
+                            ("200 OK", "ok".to_string())
+                        };
+                        let reply = format!(
+                            "HTTP/1.1 {status}\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{body}",
+                            body.len()
+                        );
+                        let _ = socket.write_all(reply.as_bytes()).await;
+                    });
+                }
+            });
+            Self { port, log }
+        }
+
+        fn events(&self) -> Vec<String> {
+            self.log.lock().unwrap().clone()
+        }
+    }
+
+    #[tokio::test]
+    async fn a_refused_browser_start_clears_the_session_holding_the_profile_and_retries() {
+        let server = FakeBrowserless::start(
+            r#"[{"browserId":"stuck","type":"browser","userDataDir":"/profiles/alice/default"},
+                {"browserId":"bobs","type":"browser","userDataDir":"/profiles/bob/default"}]"#,
+        )
+        .await;
+        let manager =
+            BrowserSessionManager::new(Some(cfg(&format!("ws://127.0.0.1:{}", server.port))));
+
+        let error = manager
+            .create_connection(&crate::handle!("alice"), "default")
+            .await
+            .err()
+            .expect("the fake server never accepts the upgrade");
+
+        let events = server.events();
+        assert_eq!(
+            events.iter().filter(|e| *e == "UPGRADE").count(),
+            2,
+            "one attempt, a recovery, one retry: {events:?}"
+        );
+        assert!(
+            events.contains(&"GET /kill/stuck".to_string()),
+            "{events:?}"
+        );
+        assert!(
+            !events.contains(&"GET /kill/bobs".to_string()),
+            "another user's session is left alone when the holder was identified: {events:?}"
+        );
+        let message = error.to_string();
+        assert!(message.contains("500"), "{message}");
+        assert!(message.contains("holds the profile"), "{message}");
+    }
+
+    #[tokio::test]
+    async fn when_the_holder_cannot_be_identified_every_browser_session_is_cleared() {
+        // The session list does not name this profile the way we expect.
+        let server = FakeBrowserless::start(
+            r#"[{"browserId":"mystery","type":"browser","userDataDir":"/somewhere/else"}]"#,
+        )
+        .await;
+        let manager =
+            BrowserSessionManager::new(Some(cfg(&format!("ws://127.0.0.1:{}", server.port))));
+
+        let _ = manager
+            .create_connection(&crate::handle!("alice"), "default")
+            .await;
+
+        let events = server.events();
+        assert!(
+            events.contains(&"GET /kill/mystery".to_string()),
+            "{events:?}"
+        );
+        assert_eq!(events.iter().filter(|e| *e == "UPGRADE").count(), 2);
     }
 
     #[test]

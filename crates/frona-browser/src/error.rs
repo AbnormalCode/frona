@@ -55,6 +55,19 @@ impl Error {
         }
     }
 
+    /// The HTTP status of a refused WebSocket upgrade, when that is what failed.
+    /// Browserless answers 500 when it cannot start a browser - most often
+    /// because a previous Chrome still holds the profile directory - so unlike a
+    /// dropped connection this will fail the same way until something clears it.
+    pub fn refused_status(&self) -> Option<u16> {
+        use chromiumoxide::error::CdpError;
+        use tungstenite::Error as WsError;
+        match self {
+            Self::Cdp(CdpError::Ws(WsError::Http(response))) => Some(response.status().as_u16()),
+            _ => None,
+        }
+    }
+
     pub fn is_disconnect(&self) -> bool {
         if matches!(self, Error::Disconnected | Error::NoActivePage) {
             return true;
