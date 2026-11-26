@@ -4,7 +4,7 @@
 use super::InferenceResponse;
 use crate::core::error::AppError;
 use frona_harness::{
-    Budget, DefaultBudget, ExecutionControl, FailureKind, ReportHandle, RunOutcome,
+    Budget, BudgetLimits, DefaultBudget, ExecutionControl, FailureKind, ReportHandle, RunOutcome,
 };
 use std::sync::Arc;
 use tokio_util::sync::CancellationToken;
@@ -15,9 +15,29 @@ pub struct RuntimeControls {
     report: ReportHandle,
 }
 
+/// The limits a run gets when the caller does not size one itself: interactive
+/// chat turns, signal evaluations, voice turns and compaction all take this.
+/// Set once at startup from the `inference` settings; before that (and in tests)
+/// the config defaults apply. The engine's own allowance (64 calls, 256 tools,
+/// 1M tokens) is far too small here - a single compaction call over a long
+/// history on a large-context model carries more than a million tokens.
+static DEFAULT_LIMITS: std::sync::OnceLock<BudgetLimits> = std::sync::OnceLock::new();
+
+pub fn set_default_limits(limits: BudgetLimits) {
+    // First writer wins; the settings are fixed for the life of the process.
+    let _ = DEFAULT_LIMITS.set(limits);
+}
+
+pub fn default_limits() -> BudgetLimits {
+    DEFAULT_LIMITS
+        .get()
+        .copied()
+        .unwrap_or_else(|| frona_harness::config::InferenceConfig::default().budget_limits())
+}
+
 impl Default for RuntimeControls {
     fn default() -> Self {
-        Self::new(Arc::new(DefaultBudget::default()))
+        Self::new(Arc::new(DefaultBudget::new(default_limits())))
     }
 }
 
@@ -72,4 +92,29 @@ pub(crate) fn required_write_error(error: AppError) -> AppError {
     AppError::Inference(Box::new(frona_harness::inference::InferenceError::Stop(
         frona_harness::ExecutionStop::Storage(Box::new(error)),
     )))
+}
+
+#[cfg(test)]
+mod default_limit_tests {
+    use super::*;
+
+    /// Chat turns, signal evaluations, voice turns and compaction all run on the
+    /// default controls. The engine's own 1M-token allowance ended them whenever
+    /// one call carried a long history on a large-context model.
+    #[test]
+    fn the_default_budget_is_not_the_engines_small_allowance() {
+        let engine = BudgetLimits::default();
+        let ours = default_limits();
+        assert!(ours.tokens.unwrap() > engine.tokens.unwrap() * 10);
+        assert!(ours.model_attempts.unwrap() > engine.model_attempts.unwrap());
+        assert!(ours.tool_calls.unwrap() > engine.tool_calls.unwrap());
+    }
+
+    #[test]
+    fn default_controls_admit_a_call_past_a_million_tokens() {
+        let budget = DefaultBudget::new(default_limits());
+        let limits = default_limits().tokens.unwrap();
+        assert!(limits > 1_000_000);
+        assert_eq!(budget.snapshot().tokens, 0);
+    }
 }

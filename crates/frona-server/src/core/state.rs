@@ -203,6 +203,7 @@ impl AppState {
     ) -> Self {
         let active_config = config_service.active();
         let config = active_config.as_ref();
+        crate::inference::controls::set_default_limits(config.inference.budget_limits());
         let http_client = crate::build_http_client();
 
         let broadcast_service =

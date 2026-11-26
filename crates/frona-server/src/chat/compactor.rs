@@ -108,7 +108,8 @@ impl TextInferenceSummarizer {
 #[async_trait]
 impl ChatSummarizer for TextInferenceSummarizer {
     async fn summarize(&self, request: SummaryRequest<'_>) -> Result<String, AppError> {
-        let budget = frona_harness::DefaultBudget::default();
+        let budget =
+            frona_harness::DefaultBudget::new(crate::inference::controls::default_limits());
         self.summarize_controlled(request, frona_harness::ExecutionControl::new(&budget))
             .await
     }
