@@ -196,7 +196,10 @@ impl Harness {
         let state = crate::inference::controls::outcome(
             outcome.as_ref().map(|outcome| &outcome.inference),
         );
-        let state = match self.finalize(message_id, user_id, outcome).await {
+        // Asked after the turn ends and before its row is finalized: a turn cancelled
+        // because a newer message registered over it is no longer the current one.
+        let current = self.active_sessions.is_current(chat_id, &cancel_token).await;
+        let state = match self.finalize(message_id, user_id, outcome, current).await {
             Ok(()) => {
                 if matches!(state, frona_harness::RunOutcome::Completed) && cancel_token.is_cancelled()
                 {
@@ -806,6 +809,7 @@ impl Harness {
         message_id: &str,
         user_id: &str,
         outcome: Result<AgentLoopOutcome, AppError>,
+        current: bool,
     ) -> Result<(), AppError> {
         match outcome {
             Ok(AgentLoopOutcome {
@@ -851,7 +855,11 @@ impl Harness {
                 }
                 InferenceResponse::Cancelled(text) => {
                     response.content = text;
-                    self.chat_service.cancel_agent_message(response).await?;
+                    // `current` is false when a newer message superseded this turn:
+                    // it is still marked Cancelled, but the UI is not told.
+                    self.chat_service
+                        .cancel_agent_message_notifying(response, current)
+                        .await?;
                 }
                 InferenceResponse::ExternalToolPending { tool_calls, .. } => {
                     if response.status != Some(crate::chat::message::models::MessageStatus::Paused)

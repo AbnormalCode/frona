@@ -112,6 +112,16 @@ impl ActiveSessions {
             .filter(|(_, registered)| registered == token)
             .map(|(generation, _)| *generation)
     }
+    /// True while `token` is still the run registered for `chat_id` - that is, it
+    /// has not been superseded by a newer `register`. A cancelled turn uses this
+    /// to tell a genuine Stop from losing to a message sent while it ran: the
+    /// successor turn's own events already carry the UI forward, and a
+    /// "cancelled" broadcast for the old one would reset the client's running
+    /// state out from under it.
+    pub async fn is_current(&self, chat_id: &str, token: &CancellationToken) -> bool {
+        self.generation(chat_id, token).await.is_some()
+    }
+
     pub async fn remove_generation(&self, chat_id: &str, generation: Option<u64>) {
         let mut map = self.inner.lock().await;
         if map.get(chat_id).map(|(current, _)| *current) == generation {
@@ -1178,6 +1188,27 @@ mod tests {
         sessions.remove_generation("chat", generation).await;
         assert!(sessions.cancel("chat").await);
         assert!(next.is_cancelled());
+    }
+
+    /// A turn cancelled because a message arrived while it ran has been replaced,
+    /// so it must not announce a Stop; one cancelled on its own (the Stop button)
+    /// is still the registered turn and does.
+    #[tokio::test]
+    async fn a_superseded_turn_is_no_longer_current_but_a_stopped_one_is() {
+        let sessions = ActiveSessions::default();
+        let first = sessions.register("chat").await;
+        assert!(sessions.is_current("chat", &first).await);
+
+        // Stop: the turn is cancelled, yet nothing replaced it.
+        assert!(sessions.cancel("chat").await);
+        assert!(first.is_cancelled());
+        assert!(sessions.is_current("chat", &first).await);
+
+        // An interrupting message registers a successor and cancels the old turn.
+        let second = sessions.register("chat").await;
+        assert!(!sessions.is_current("chat", &first).await);
+        assert!(sessions.is_current("chat", &second).await);
+        assert!(!sessions.is_current("other-chat", &second).await);
     }
 
     #[tokio::test]

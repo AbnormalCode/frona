@@ -1666,9 +1666,19 @@ impl ChatService {
     }
 
     /// Mark `msg` as cancelled. Caller pre-fills any fields it wants set.
-    pub async fn cancel_agent_message(
+    pub async fn cancel_agent_message(&self, msg: Message) -> Result<MessageResponse, AppError> {
+        self.cancel_agent_message_notifying(msg, true).await
+    }
+
+    /// As [`Self::cancel_agent_message`], with `notify` gating the live
+    /// "cancelled" broadcast that tells the UI to stop showing a running turn.
+    /// Pass `false` for a turn that was superseded by a newer one (a message sent
+    /// while it ran): the row is still marked Cancelled, but the client is not
+    /// told, because the successor turn owns the running/streaming state.
+    pub async fn cancel_agent_message_notifying(
         &self,
         mut msg: Message,
+        notify: bool,
     ) -> Result<MessageResponse, AppError> {
         msg.status = Some(MessageStatus::Cancelled);
         msg.error = None;
@@ -1683,16 +1693,18 @@ impl ChatService {
                 chat.space_id.clone(),
                 None,
             );
-            self.broadcast.send(crate::chat::broadcast::BroadcastEvent {
-                user_id: chat.user_id.clone(),
-                chat_id: Some(chat.id.clone()),
-                space_id: chat.space_id.clone(),
-                kind: crate::chat::broadcast::BroadcastEventKind::Inference(
-                    crate::inference::tool_loop::InferenceEventKind::Cancelled {
-                        reason: "Cancelled".to_string(),
-                    },
-                ),
-            });
+            if notify {
+                self.broadcast.send(crate::chat::broadcast::BroadcastEvent {
+                    user_id: chat.user_id.clone(),
+                    chat_id: Some(chat.id.clone()),
+                    space_id: chat.space_id.clone(),
+                    kind: crate::chat::broadcast::BroadcastEventKind::Inference(
+                        crate::inference::tool_loop::InferenceEventKind::Cancelled {
+                            reason: "Cancelled".to_string(),
+                        },
+                    ),
+                });
+            }
         }
         Ok(updated.into())
     }

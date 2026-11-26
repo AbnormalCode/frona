@@ -216,9 +216,49 @@ export function FronaComposer({
     editorBridgeRef.current?.closest("form")?.requestSubmit();
   }, [recorder, composerRuntime, threadRunning, toast]);
 
+  // Steer a running agent: send the composer text as a guidance message that
+  // interrupts + redirects the current turn. Only meaningful for the main chat
+  // composer (not the home/space `onSend` composer or the HITL wizard).
+  const canInterrupt = !!chatCtx?.interrupt && !onSend && !currentPendingTool;
+  const handleInterrupt = useCallback(() => {
+    if (!chatCtx?.interrupt) return;
+    const state = composerRuntime.getState();
+    const text = state.text.trim();
+    if (!text) return;
+    let backendAttachments: Attachment[];
+    try {
+      backendAttachments = getBackendAttachments(state.attachments);
+    } catch (error) {
+      setAttachmentError(error instanceof Error ? error.message : "Attachment unavailable");
+      return;
+    }
+    setAttachmentError(null);
+    composerRuntime.setText("");
+    chatCtx.interrupt(text, backendAttachments.length ? backendAttachments : undefined);
+  }, [chatCtx, composerRuntime]);
+
+  // While the agent is running, Enter would otherwise no-op (the runtime blocks
+  // send). Intercept it in the capture phase and route to interrupt instead, so
+  // the user can steer without first hitting Stop.
+  useEffect(() => {
+    if (!threadRunning || !canInterrupt) return;
+    const el = editorBridgeRef.current;
+    if (!el) return;
+    const handler = (e: KeyboardEvent) => {
+      if (e.key !== "Enter" || e.shiftKey || e.isComposing) return;
+      e.preventDefault();
+      e.stopPropagation();
+      handleInterrupt();
+    };
+    el.addEventListener("keydown", handler, true);
+    return () => el.removeEventListener("keydown", handler, true);
+  }, [threadRunning, canInterrupt, handleInterrupt]);
+
   const activePlaceholder = currentPendingTool
     ? "Type your answer or click an option above..."
-    : placeholder;
+    : threadRunning && canInterrupt
+      ? "Send guidance to steer the agent…"
+      : placeholder;
 
   useEffect(() => {
     if (!menuOpen) return;
@@ -429,9 +469,21 @@ export function FronaComposer({
               ) : (
               <>
               <ThreadPrimitive.If running>
+                {canInterrupt && (
+                  <button
+                    type="button"
+                    onClick={handleInterrupt}
+                    title="Send guidance to steer the agent"
+                    aria-label="Send guidance"
+                    className="shrink-0 rounded-lg p-1.5 text-text-secondary hover:text-text-primary transition"
+                  >
+                    <PaperAirplaneIcon className="h-5 w-5" />
+                  </button>
+                )}
                 <ComposerPrimitive.Cancel asChild>
                   <button
                     type="button"
+                    title="Stop"
                     className="shrink-0 rounded-lg p-1.5 text-text-secondary hover:text-text-primary transition"
                   >
                     <StopIcon className="h-5 w-5" />
