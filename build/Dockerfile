@@ -68,7 +68,7 @@ RUN apt-get update \
   && apt-get install -y --no-install-recommends curl ca-certificates jq \
   && rm -rf /var/lib/apt/lists/*
 RUN mkdir -p /ontology && cd /ontology \
-  && curl -fsSL https://api.github.com/repos/Mpercy-Git/frona-ontologies/releases/latest \
+  && curl -fsSL https://api.github.com/repos/AbnormalCode/frona-ontologies/releases/latest \
      -o /tmp/release.json \
   && jq -r '.assets[].browser_download_url' /tmp/release.json \
      | grep -E '\.ttl\.gz$|/(metadata\.json|NOTICE)$' \
@@ -173,7 +173,7 @@ FROM python:3.12-slim-bookworm AS prod
 ARG VERSION=dev
 ARG REVISION=unknown
 ARG CREATED=unknown
-LABEL org.opencontainers.image.source="https://github.com/Mpercy-Git/frona"
+LABEL org.opencontainers.image.source="https://github.com/AbnormalCode/frona"
 LABEL org.opencontainers.image.description="Frona — personal AI assistant"
 LABEL org.opencontainers.image.licenses="BSL-1.1"
 LABEL org.opencontainers.image.title="frona"

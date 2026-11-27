@@ -1,4 +1,4 @@
-REGISTRY  := ghcr.io/mpercy-git/frona
+REGISTRY  := ghcr.io/abnormalcode/frona
 CACHE_DIR := $(HOME)/.docker/buildx-cache/frona
 PLATFORM  := linux/amd64
 

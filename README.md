@@ -9,7 +9,7 @@
     <img src="https://img.shields.io/badge/built_with-Rust-dea584?style=flat-square&logo=rust" alt="Built with Rust">
     <a href="https://github.com/fronalabs/frona/blob/main/LICENSE"><img src="https://img.shields.io/badge/license-BSL_1.1-blue?style=flat-square" alt="License"></a>
     <a href="https://github.com/fronalabs/frona/stargazers"><img src="https://img.shields.io/github/stars/fronalabs/frona?style=flat-square&logo=github" alt="GitHub stars"></a>
-    <a href="https://github.com/Mpercy-Git/frona/pkgs/container/frona"><img src="https://img.shields.io/badge/ghcr.io-mpercy--git%2Ffrona-2496ed?style=flat-square&logo=docker&logoColor=white" alt="Container image"></a>
+    <a href="https://github.com/AbnormalCode/frona/pkgs/container/frona"><img src="https://img.shields.io/badge/ghcr.io-abnormalcode%2Ffrona-2496ed?style=flat-square&logo=docker&logoColor=white" alt="Container image"></a>
     <a href="https://docs.frona.ai/"><img src="https://img.shields.io/badge/docs-frona.ai-8a3ffc?style=flat-square" alt="Documentation"></a>
 </p>
 
@@ -21,7 +21,7 @@ You deploy Frona on your own infrastructure and keep full control of your data. 
 
 ## ⭐ Fork Enhancements — Unique to This Repository
 
-> **This is a fork of [fronalabs/frona](https://github.com/fronalabs/frona).** Everything in this section is **exclusive to this fork** and is *not* present in upstream. Images are published to `ghcr.io/mpercy-git/frona`, not the upstream registry.
+> **This is a fork of [fronalabs/frona](https://github.com/fronalabs/frona).** Everything in this section is **exclusive to this fork** and is *not* present in upstream. Images are published to `ghcr.io/abnormalcode/frona`, not the upstream registry.
 
 The features and fixes below have been added on top of upstream. They are maintained here and do not exist in `fronalabs/frona`.
 
@@ -183,7 +183,7 @@ deleting and recreating the account.
 
 ### 🏗️ Build & release (fork-only)
 
-- Release workflow publishing multi-arch images to **this fork's GHCR** (`ghcr.io/mpercy-git/frona`), which also bumps the image tag in the docker-compose and Kubernetes examples on release, so a published example never points at a tag that doesn't exist
+- Release workflow publishing multi-arch images to **this fork's GHCR** (`ghcr.io/abnormalcode/frona`), which also bumps the image tag in the docker-compose and Kubernetes examples on release, so a published example never points at a tag that doesn't exist
 - CI gates formatting, clippy, the backend test suite, and the frontend typecheck/lint/tests on every push
 - Faster Docker builds: shared `rust-base` stage (installs toolchain once), persistent local BuildKit cache, and a `Makefile` for native-arch local builds
 
@@ -247,7 +247,7 @@ You'll need an OCI runtime with Compose v2 support, such as [Docker](https://doc
 # docker-compose.yml
 services:
   frona:
-    image: ghcr.io/mpercy-git/frona:latest
+    image: ghcr.io/abnormalcode/frona:latest
     ports:
       - "3001:3001"
     volumes:
