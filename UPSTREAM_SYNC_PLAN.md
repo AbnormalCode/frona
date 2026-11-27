@@ -684,3 +684,46 @@ Not ported: `f7774c1e`, `2fc32f41`, `576be457` (sandbox/harness extraction,
 bounded tool-batch concurrency — Group M territory; `f7774c1e` is another new
 crate-extraction, 60 files), `1e230ba9`, `c27d6fc7`, `05332fd0`, `2428d4e9`
 (release automation, container pins, crate docs — Group O).
+
+### Audit update — 2026-11-27 (upstream through `259d3ef`)
+
+Upstream `fronalabs/frona` `main` @ `259d3ef` (2026-11-25). **17 non-merge
+commits** after `05332fd0` (the 2026-11-18 audit head). Fork is at `1a1387c`
+(Groups K, L, P landed). Nothing here is ported yet.
+
+**Group Q — small, independent; port next (low risk)**
+- `4cfd5db` You.com and `d7f5b42` Firecrawl web-search providers
+  (`tool/web_search.rs`, `core/config/types.rs`, `search-section.tsx`,
+  README, docker-compose example). Self-contained; port both together.
+- `ce529c0` limit stack use in task execution/consolidation (boxing futures
+  in `agent/task/executor.rs`, `inference/*`, `memory/pkm/consolidation/*`).
+  Bug fix; `agent/harness.rs` hunks may need adapting to the fork's tree.
+- `7a6f5a4` optimize nested SurrealDB values in dev builds
+  (`.cargo/config.toml` + `tests/db_nested_values.rs`). Take the test; the
+  `.cargo/config.toml` is Group O territory but is tiny.
+- `ffaab81` Signal: Presage update + message-handling adaptation (5 files).
+  Keep the fork's git pins for presage; regenerate lock with `cargo update -p`.
+- `06bde2b` verify crash repairs in a dedicated chat (`app/repair.rs`,
+  `app/supervisor.rs`, new `send_message_gating_e2e.rs`). Check that fork's
+  `app/supervisor.rs` hasn't diverged first.
+
+**Group R — toolchain/dependency refreshes (do together, needs CI)**
+`a24d66f` Rust 1.100.0, `b28a5ce` Node 24.22.3 (also `b3cd197a`, deferred from
+Group K; fork is on Rust 1.98.1), `fdfe703` lockfile refresh (take via
+`cargo update`, never hand-merge), `6311592` frontend deps (take upstream
+`package.json`/lock, prune packages the fork doesn't use), `630fbbe`
+Browserless/SearXNG image tags, `866c40e` container package refresh + CLI
+download validation. Bump toolchain in one PR so CI failures are attributable.
+`f3d53f5` (Rig + Bedrock upgrade) is **Group M** — skip until the harness
+go/no-go decision.
+
+**Group M additions (blocked on go/no-go):** `adb41b3` (68 files, +3.4k/-2k,
+harness history writes), `f128084`, `96b6e8e`, `0eba58e` (+1k). Upstream is
+still piling onto the harness crate; every week raises Group M cost. The
+decision requested on 2026-11-13 remains open and is the biggest divergence
+risk. Recommendation unchanged: spike (`GROUP_M_HARNESS_SCOPING.md`), then
+decide; otherwise freeze and cherry-pick Q/R only.
+
+**Suggested order:** Q (one PR, ~1 day) → R (one PR, after CI green) → decide
+M. Verify each with `cargo check --workspace --tests`, `cargo fmt --check`,
+`cargo clippy -- -D warnings`, web `tsc`/`eslint`/`vitest`.
