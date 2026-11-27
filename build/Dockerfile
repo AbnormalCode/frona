@@ -1,6 +1,6 @@
 ARG TARGETARCH
 
-FROM rust:1.99.1-bookworm AS catalog-builder
+FROM rust:1.100.0-bookworm AS catalog-builder
 WORKDIR /app
 COPY Cargo.toml Cargo.lock ./
 COPY crates/ crates/
@@ -13,7 +13,7 @@ COPY --from=catalog-builder /app/target/release/frona-model-catalog /usr/local/b
 COPY crates/frona-model-catalog/resources/modelparams-schema.json /catalogs/modelparams-schema.json
 RUN frona-model-catalog download --output /catalogs
 
-FROM node:24.22.1-bookworm-slim AS node-runtime
+FROM node:24.22.3-bookworm-slim AS node-runtime
 
 FROM node-runtime AS frontend-builder
 WORKDIR /app/web
@@ -22,7 +22,7 @@ RUN npm ci
 COPY web/ .
 RUN npm run build
 
-FROM rust:1.99.1-bookworm AS planner
+FROM rust:1.100.0-bookworm AS planner
 RUN --mount=type=bind,source=build/pkgs/builder-rust-cargo.txt,target=/tmp/cargo.txt \
   for line in $(grep -vE '^\s*(#|$)' /tmp/cargo.txt); do \
     crate=${line%%=*}; version=${line#*=}; \
@@ -33,7 +33,7 @@ COPY Cargo.toml Cargo.lock ./
 COPY crates/ crates/
 RUN cargo chef prepare --recipe-path recipe.json
 
-FROM rust:1.99.1-bookworm AS backend-builder
+FROM rust:1.100.0-bookworm AS backend-builder
 RUN --mount=type=bind,source=build/pkgs/builder-rust-apt.txt,target=/tmp/packages.txt \
   apt-get update && apt-get install -y --no-install-recommends \
   $(grep -vE '^\s*(#|$)' /tmp/packages.txt | tr '\n' ' ') \
@@ -78,8 +78,8 @@ RUN mkdir -p /ontology && cd /ontology \
   && echo "ontology release $(jq -r .tag_name /tmp/release.json): $(ls | tr '\n' ' ')"
 
 # Use the same architecture-specific toolchains as Syd's upstream CI.
-FROM docker.io/exherbo/syd-builder:x86_64-pc-linux-gnu@sha256:caadb818ccea63e6ed4b215fced041e16ca9469de9c87fe6fa9c08913c6e9746 AS syd-builder-amd64
-FROM docker.io/exherbo/syd-builder:aarch64-unknown-linux-gnueabi@sha256:d199f9f01bcc0e38e76ea84f1f470b294c2eeed46693780c2c46f8aaf3954345 AS syd-builder-arm64
+FROM docker.io/exherbo/syd-builder:x86_64-pc-linux-gnu@sha256:b56f327306a849a40e21e66d9881869debedaec70ba63ad8adc32602507409c6 AS syd-builder-amd64
+FROM docker.io/exherbo/syd-builder:aarch64-unknown-linux-gnueabi@sha256:290753b51d092c8929c8fb3f5e75d4149a33f67b5364d34eed4e710bdb1a2836 AS syd-builder-arm64
 
 FROM syd-builder-${TARGETARCH} AS syd-builder
 WORKDIR /src/syd
@@ -109,7 +109,7 @@ RUN --mount=type=bind,source=build/pkgs/prod-pkgs.txt,target=/tmp/pkgs.txt \
   && chmod +x /usr/local/bin/op \
   && rm /tmp/op.zip \
   && if [ "$TARGETARCH" = "amd64" ]; then BW_ARCH=""; else BW_ARCH="-${TARGETARCH}"; fi \
-  && curl -sSfLo /tmp/bw.zip "https://github.com/bitwarden/clients/releases/download/cli-v${BW_VER}/bw-linux${BW_ARCH}-${BW_VER}.zip" \
+  && curl -sSfLo /tmp/bw.zip "https://github.com/bitwarden/clients/releases/download/cli-v${BW_VER}/bw-bit-linux${BW_ARCH}-${BW_VER}.zip" \
   && unzip -o /tmp/bw.zip -d /usr/local/bin \
   && chmod +x /usr/local/bin/bw \
   && rm /tmp/bw.zip
@@ -153,7 +153,7 @@ ENV RUSTUP_HOME=/usr/local/rustup \
     CARGO_HOME=/usr/local/cargo \
     PATH=/usr/local/cargo/bin:$PATH
 RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \
-  | sh -s -- -y --no-modify-path --profile minimal --default-toolchain 1.99.1 \
+  | sh -s -- -y --no-modify-path --profile minimal --default-toolchain 1.100.0 \
   && rustup component add clippy rustfmt
 
 COPY --from=python-builder /install /usr/local

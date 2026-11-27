@@ -14,6 +14,8 @@ const searchProviders = [
   { value: "tavily", label: "Tavily" },
   { value: "brave", label: "Brave" },
   { value: "keenable", label: "Keenable" },
+  { value: "youcom", label: "You.com" },
+  { value: "firecrawl", label: "Firecrawl" },
 ];
 
 function inferProvider(search: SearchConfig): string | null {
