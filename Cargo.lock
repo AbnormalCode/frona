@@ -3213,7 +3213,7 @@ dependencies = [
 [[package]]
 name = "frona-ontologies"
 version = "0.1.0"
-source = "git+https://github.com/Mpercy-Git/frona-ontologies?rev=0bf0276508bd56a7177776ac97aedc78a7716ae0#0bf0276508bd56a7177776ac97aedc78a7716ae0"
+source = "git+https://github.com/AbnormalCode/frona-ontologies?rev=0bf0276508bd56a7177776ac97aedc78a7716ae0#0bf0276508bd56a7177776ac97aedc78a7716ae0"
 dependencies = [
  "anyhow",
  "flate2",
